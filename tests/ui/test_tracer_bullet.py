@@ -165,3 +165,11 @@ def test_a_run_that_outlives_its_timeout_is_stopped(client, settings):
     created = run(client, ["--sleep", "5"]).json()
     assert created["outcome"] == "stopped"
     assert created["exit_code"] is None
+
+
+def test_the_stored_log_has_the_same_line_endings_on_every_platform(client):
+    # On Windows the engine's stderr uses CRLF; the stored log is display text, so it is
+    # normalised. stdout is data and stays byte-exact.
+    created = run(client, ["--log", "first\r\nsecond", "--print", "a\r\nb"]).json()
+    assert created["stderr"] == "first\nsecond\n"
+    assert created["stdout"] == "a\r\nb\n"

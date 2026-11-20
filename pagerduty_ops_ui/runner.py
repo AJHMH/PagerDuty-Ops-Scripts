@@ -49,6 +49,16 @@ def child_env(extra_env: dict[str, str], secret_env: dict[str, str]) -> dict[str
     return env
 
 
+def as_log(raw: bytes, secrets) -> str:
+    """stderr is display text: decode, normalise CRLF (Windows) to LF, and redact."""
+    return redact(raw.decode("utf-8", "replace").replace("\r\n", "\n"), secrets)
+
+
+def as_data(raw: bytes, secrets) -> str:
+    """stdout is data: decode and redact, but keep it byte-exact otherwise."""
+    return redact(raw.decode("utf-8", "replace"), secrets)
+
+
 def redact(text: str, secrets) -> str:
     for value in secrets:
         if value and len(value) >= 4:
@@ -71,13 +81,13 @@ def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
     except subprocess.TimeoutExpired as e:
         return Result(
             exit_code=None, outcome="stopped",
-            stdout=redact((e.stdout or b"").decode("utf-8", "replace"), secrets),
-            stderr=redact((e.stderr or b"").decode("utf-8", "replace"), secrets)
+            stdout=as_data(e.stdout or b"", secrets),
+            stderr=as_log(e.stderr or b"", secrets)
             + f"\n[stopped: no result after {timeout:g} seconds]\n",
         )
     return Result(
         exit_code=done.returncode,
         outcome=outcome_for(done.returncode),
-        stdout=redact(done.stdout.decode("utf-8", "replace"), secrets),
-        stderr=redact(done.stderr.decode("utf-8", "replace"), secrets),
+        stdout=as_data(done.stdout, secrets),
+        stderr=as_log(done.stderr, secrets),
     )
