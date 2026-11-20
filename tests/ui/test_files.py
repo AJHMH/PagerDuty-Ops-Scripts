@@ -134,7 +134,8 @@ def test_a_usage_error_carries_the_commands_message(client):
 
 def test_outputs_may_not_be_written_over_the_uploaded_inputs(client, settings):
     upload = [("file.input", ("services.csv", b"x\n", "text/csv"))]
-    for target in ("inputs/input/services.csv", "inputs", "./inputs/x.txt"):
+    for target in ("inputs/input/services.csv", "inputs", "./inputs/x.txt",
+                   ["inputs/input/services.csv"]):  # a one-item list is the same value
         assert run_values(client, {"output": target}, files=upload).status_code == 422
     assert not settings.run_root.exists() or not any(settings.run_root.iterdir())
 

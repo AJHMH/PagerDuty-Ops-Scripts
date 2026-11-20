@@ -65,16 +65,21 @@ export function RunForm() {
 
   useEffect(() => {
     if (!command) return;
+    // Responses can arrive out of order when the command changes quickly: only the one for
+    // the command still selected may update the form.
+    let current = true;
     setForm(null);
     setState({});
     setError("");
     getForm(command)
       .then((f) => {
+        if (!current) return;
         setForm(f);
         // Phase 1 runs read-only modes only; the service refuses the rest anyway.
         setSubcommand(f.subcommands?.find((s) => !s.writes)?.name ?? null);
       })
-      .catch((e: Error) => setError(e.message));
+      .catch((e: Error) => { if (current) setError(e.message); });
+    return () => { current = false; };
   }, [command]);
 
   const sub = useMemo(() => form?.subcommands?.find((s) => s.name === subcommand) ?? null,

@@ -184,10 +184,6 @@ def _emit(field: dict, value, uploads: dict[str, list[str]]) -> list[str]:
         value = paths[0] if kind == "input-file" else paths[0].rsplit("/", 1)[0]
     if value in (None, "", [], False):
         return []
-    if kind in ("output-file", "output-dir") and isinstance(value, str):
-        parts = [p for p in re.split(r"[\\/]", value) if p not in ("", ".")]
-        if parts and parts[0] == "inputs":
-            raise BadValues(f"{field['dest']}: outputs can't be written over the uploaded inputs")
     if kind == "flag":
         if value is not True:
             raise BadValues(f"{field['dest']} is a yes/no flag")
@@ -196,7 +192,13 @@ def _emit(field: dict, value, uploads: dict[str, list[str]]) -> list[str]:
         if isinstance(value, bool) or not isinstance(value, int) or value < 0:
             raise BadValues(f"{field['dest']} must be a whole number")
         return [_flag_name(field)] * value
-    items = _as_list(field, value)
+    items = _as_list(field, value)  # normalised first, so a one-item list is checked too
+    if kind in ("output-file", "output-dir"):
+        for item in items:
+            parts = [p for p in re.split(r"[\\/]", item) if p not in ("", ".")]
+            if parts and parts[0] == "inputs":
+                raise BadValues(f"{field['dest']}: outputs can't be written over the "
+                                "uploaded inputs")
     if field["positional"]:
         return items
     argv = []
