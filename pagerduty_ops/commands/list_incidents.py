@@ -8,6 +8,7 @@ from ..api import paginate
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("list_incidents")
 
@@ -88,6 +89,9 @@ def incident_row(inc: dict) -> dict:
         "service_summary": svc.get("summary") or "",
         "assignees": _assignees_str(inc),
     }
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

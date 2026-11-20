@@ -25,11 +25,15 @@ history scan. Run the unit suite and ruff before every commit.
 - `pagerduty_ops/bulkops.py` — CSV loading/validation, ISO 8601 parsing, idempotent renames.
 - `pagerduty_ops/commands/<name>.py` — one module per command, exposing `build_parser()` and
   `main(argv=None) -> int`.
+- `pagerduty_ops/risk.py` — `Risk` declarations and `assess()`: whether a Run writes, is a dry
+  run, or is an Irreversible operation (ADR 0010).
 - `pd_common.py` — deprecated re-export surface; do not add to it.
 
 ## Adding a command (checklist)
 
-1. `pagerduty_ops/commands/<name>.py` with `build_parser()` + `main()`.
+1. `pagerduty_ops/commands/<name>.py` with `build_parser()` + `main()`, and a `RISK`
+   declaration (`READ_ONLY`, or `writes_with_dry_run`/`writes_with_apply` with any irreversible
+   flags, plan options and caps; one per subcommand). The unit suite fails without it.
 2. Root shim `pd_<name>.py` (copy an existing shim).
 3. Entry in `pagerduty_ops/console_scripts.py` and `[project.scripts]` in `pyproject.toml`.
 4. Add the module to `COMMAND_MODULES` in `tests/unit/test_commands.py`, plus behavior tests

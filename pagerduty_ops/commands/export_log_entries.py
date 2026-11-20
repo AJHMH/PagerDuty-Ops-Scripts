@@ -10,6 +10,7 @@ from ..api import paginate
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("export_log_entries")
 
@@ -17,6 +18,9 @@ FIELDNAMES = [
     "id", "created_at", "resource_type", "summary", "agent_id", "agent_summary",
     "service_id", "service_summary", "incident_id", "incident_number",
 ]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

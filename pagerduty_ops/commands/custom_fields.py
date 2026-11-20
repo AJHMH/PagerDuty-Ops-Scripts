@@ -25,6 +25,7 @@ import sys
 from ..api import PDApiError, paginate, request
 from ..cli import EXIT_FAILURES, EXIT_OK, EXIT_USAGE, add_logging_args, add_token_args, init
 from ..log import get_logger
+from ..risk import READ_ONLY, writes_with_apply
 
 log = get_logger("custom_fields")
 
@@ -34,6 +35,12 @@ SERVICE_BASE = "services/custom_fields"
 FIELD_KEYS = ("name", "display_name", "data_type", "field_type", "enabled", "default_value")
 MUTABLE = ("display_name", "enabled", "default_value")
 IMMUTABLE = ("data_type", "field_type")
+
+
+RISK = {
+    "export": READ_ONLY,
+    "apply": writes_with_apply(irreversible_flags=("--prune",)),
+}
 
 
 def build_parser():

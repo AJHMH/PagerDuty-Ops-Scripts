@@ -9,11 +9,15 @@ from ..cli import confirm, finish_bulk, init, standard_parser
 from ..config import get_team_id
 from ..log import get_logger
 from ..output import render_rows
+from ..risk import writes_with_dry_run
 from .team_members import fetch_members, member_row
 
 log = get_logger("update_team_roles")
 
 VALID_TEAM_ROLES = {"manager", "responder", "observer"}
+
+
+RISK = writes_with_dry_run()
 
 
 def build_parser():

@@ -35,7 +35,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 
 ## Adding a command
 
-1. Create `pagerduty_ops/commands/<name>.py` exposing `build_parser()` and `main(argv=None) -> int`.
+1. Create `pagerduty_ops/commands/<name>.py` exposing `build_parser()` and `main(argv=None) -> int`, plus a `RISK` declaration next to the parser: `READ_ONLY` for commands that never write, otherwise `writes_with_dry_run(...)` or `writes_with_apply(...)` naming any flags or Plan options that make it irreversible and any write caps. Commands with subcommands declare one per subcommand. See `pagerduty_ops/risk.py` and ADR 0010; the unit suite fails without it.
 2. Add a root shim `pd_<name>.py` (copy an existing one).
 3. Register it in `pagerduty_ops/console_scripts.py` and under `[project.scripts]` in `pyproject.toml`.
 4. Add the module to `COMMAND_MODULES` in `tests/unit/test_commands.py`, plus behavior tests.

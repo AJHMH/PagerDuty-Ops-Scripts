@@ -29,6 +29,7 @@ from ..log import get_logger
 from ..output import render_rows, write_payload
 from ..pdstate import PDState, ref_ids
 from ..plan import new_plan, write_plan
+from ..risk import READ_ONLY
 
 log = get_logger("validate")
 
@@ -59,6 +60,9 @@ DEFAULT_CONFIG = {
     "naming": {},                       # {resource: regex}
     "default_member_role": "responder",
 }
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

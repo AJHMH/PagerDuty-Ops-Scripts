@@ -39,6 +39,7 @@ from ..output import render_rows, write_payload
 from ..pdstate import PDState, ref_ids
 from ..plan import load_plan, new_plan, plan_hash, write_plan
 from ..receipts import receipts_dir, require_receipt, write_receipt
+from ..risk import CLEARS_SN_FIELD, READ_ONLY, writes_with_dry_run
 from ..servicenow import connect, load_field_map
 
 log = get_logger("sn_sync")
@@ -72,6 +73,15 @@ def _sn_args(p):
 def _filter_args(p):
     p.add_argument("--team-ids", help="Comma-separated PD team IDs: only groups mapped to them.")
     p.add_argument("--service-ids", help="Comma-separated PD service IDs: only those groups.")
+
+
+RISK = {
+    "report": READ_ONLY,
+    "plan": READ_ONLY,
+    "apply": writes_with_dry_run(irreversible_plan_items=(CLEARS_SN_FIELD,),
+                                 irreversible_on_sn_production=True,
+                                 cap_flags=("--max-writes",)),
+}
 
 
 def build_parser():

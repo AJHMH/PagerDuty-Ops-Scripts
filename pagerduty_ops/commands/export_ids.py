@@ -6,12 +6,16 @@ from __future__ import annotations
 from ..api import fetch_all
 from ..cli import init, standard_parser
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 FIELDNAMES = [
     "team_id", "team_name", "schedule_id", "schedule_name",
     "escalation_policy_id", "escalation_policy_name",
     "service_id", "service_name", "webhook_id", "webhook_name",
 ]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

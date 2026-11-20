@@ -33,12 +33,20 @@ from ..cli import (
     init,
 )
 from ..log import get_logger
+from ..risk import READ_ONLY, writes_with_dry_run
 
 log = get_logger("security_config")
 
 SESSION_TYPES = ("web", "mobile")
 ABSOLUTE_TTL = (600, 18144000)      # seconds, per the API's write schema
 IDLE_TTL = (60, 15552000)
+
+
+RISK = {
+    "export": READ_ONLY,
+    "diff": READ_ONLY,
+    "apply-sessions": writes_with_dry_run(),
+}
 
 
 def build_parser():

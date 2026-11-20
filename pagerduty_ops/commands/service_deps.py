@@ -29,6 +29,7 @@ from ..cli import (
 )
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY, writes_with_dry_run
 
 log = get_logger("service_deps")
 
@@ -36,6 +37,12 @@ KINDS = ("service", "business_service")
 ACTIONS = ("associate", "disassociate")
 COLUMNS = ["action", "supporting_kind", "supporting_id", "dependent_kind", "dependent_id"]
 DEFAULT_BATCH = 100
+
+
+RISK = {
+    "export": READ_ONLY,
+    "apply": writes_with_dry_run(),
+}
 
 
 def build_parser():

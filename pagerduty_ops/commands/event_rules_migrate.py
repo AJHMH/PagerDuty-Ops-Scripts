@@ -32,6 +32,7 @@ from ..cli import (
 )
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY, writes_with_dry_run
 
 log = get_logger("event_rules_migrate")
 
@@ -46,6 +47,14 @@ def _targets(p, *, allow_all_help: str):
     p.add_argument("--max-services", type=int, default=DEFAULT_MAX_SERVICES,
                    help=f"Refuse to change more services than this "
                         f"(default {DEFAULT_MAX_SERVICES}).")
+
+
+RISK = {
+    "inventory": READ_ONLY,
+    "convert": writes_with_dry_run(irreversible=True, cap_flags=("--max-services",)),
+    "activate": writes_with_dry_run(cap_flags=("--max-services",)),
+    "deactivate": writes_with_dry_run(cap_flags=("--max-services",)),
+}
 
 
 def build_parser():

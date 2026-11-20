@@ -9,10 +9,14 @@ from ..api import paginate
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("export_change_events")
 
 FIELDNAMES = ["id", "type", "summary", "timestamp", "source", "service_ids"]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

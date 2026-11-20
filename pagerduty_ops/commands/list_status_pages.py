@@ -6,11 +6,15 @@ from ..api import paginate, request
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("list_status_pages")
 
 PAGE_FIELDS = ["id", "name", "html_url"]
 POST_FIELDS = ["id", "title", "post_type", "starts_at", "ends_at", "status"]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

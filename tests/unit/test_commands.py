@@ -40,6 +40,57 @@ def test_every_command_help_exits_zero(module_name, capsys):
         assert "usage:" in capsys.readouterr().out.lower()
 
 
+# ---------- risk declarations (ADR 0010) ----------
+
+@pytest.mark.parametrize("module_name", COMMAND_MODULES)
+def test_every_command_declares_its_risk(module_name):
+    from pagerduty_ops.risk import declarations
+
+    module = importlib.import_module(f"pagerduty_ops.commands.{module_name}")
+    found = declarations(module)
+    assert found, f"{module_name} declares no risk"
+
+
+def _subparsers(parser):
+    import argparse
+
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            return action.choices
+    return None
+
+
+def _option_strings(parser):
+    return {o for action in parser._actions for o in action.option_strings}
+
+
+@pytest.mark.parametrize("module_name", COMMAND_MODULES)
+def test_risk_declarations_match_the_parsers(module_name):
+    from pagerduty_ops.risk import Risk, declarations
+
+    module = importlib.import_module(f"pagerduty_ops.commands.{module_name}")
+    for builder, declaration in declarations(module).items():
+        parser = getattr(module, builder)()
+        subs = _subparsers(parser)
+        if subs is None:
+            assert isinstance(declaration, Risk), f"{module_name}.{builder} has no subcommands"
+            targets = {None: (declaration, parser)}
+        else:
+            assert isinstance(declaration, dict), (
+                f"{module_name}.{builder} needs a declaration per subcommand")
+            assert set(declaration) == set(subs), (
+                f"{module_name}.{builder} declares {sorted(declaration)}, "
+                f"parser has {sorted(subs)}")
+            targets = {name: (declaration[name], subs[name]) for name in subs}
+        for name, (risk, sub) in targets.items():
+            known = _option_strings(parser) | _option_strings(sub)
+            declared = set(risk.irreversible_flags) | set(risk.cap_flags)
+            if risk.writes:
+                declared.add(risk.write_switch)
+            missing = declared - known
+            assert not missing, f"{module_name} {name or ''}: unknown flags {sorted(missing)}"
+
+
 # ---------- pure helpers ----------
 
 def test_parse_multi_dedupes_and_splits():

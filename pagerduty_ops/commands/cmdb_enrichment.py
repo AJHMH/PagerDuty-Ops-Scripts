@@ -40,6 +40,7 @@ from ..cli import (
 )
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY, writes_with_dry_run
 
 log = get_logger("cmdb_enrichment")
 
@@ -58,6 +59,16 @@ def _common(p, write=False):
                    help="Required: acknowledge these are PagerDuty Early Access APIs.")
     if write:
         add_write_guards(p)
+
+
+RISK = {
+    "list": READ_ONLY,
+    "table-test": READ_ONLY,
+    "tables-apply": writes_with_dry_run(),
+    "schemas-apply": writes_with_dry_run(),
+    "records-upload": writes_with_dry_run(),
+    "associations": writes_with_dry_run(),
+}
 
 
 def build_parser():

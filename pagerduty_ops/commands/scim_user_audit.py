@@ -13,11 +13,15 @@ from ..bulkops import load_csv_rows
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("scim_user_audit")
 
 SCIM_PAGE_SIZE = 100
 SCIM_HEADERS = {"Accept": "application/scim+json"}
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

@@ -9,6 +9,7 @@ from ..api import paginate_cursor
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("audit_export")
 
@@ -16,6 +17,9 @@ FIELDNAMES = [
     "id", "execution_time", "action", "actor_id", "actor_type", "actor_summary",
     "root_resource_id", "root_resource_type", "root_resource_summary", "method_type",
 ]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

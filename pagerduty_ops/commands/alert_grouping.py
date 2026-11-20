@@ -10,10 +10,14 @@ from ..bulkops import load_csv_rows
 from ..cli import confirm, init, standard_parser
 from ..log import get_logger
 from ..output import write_payload
+from ..risk import writes_with_dry_run
 
 log = get_logger("alert_grouping")
 
 ENDPOINT = "alert_grouping_settings"
+
+
+RISK = writes_with_dry_run()
 
 
 def build_parser():

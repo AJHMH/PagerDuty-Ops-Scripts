@@ -12,10 +12,14 @@ from ..cli import init, standard_parser
 from ..config import get_team_id
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("team_members")
 
 FIELDNAMES = ["user_id", "type", "name", "role"]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

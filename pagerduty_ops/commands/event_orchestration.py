@@ -20,11 +20,15 @@ from ..api import PDApiError, fetch_all, request
 from ..cli import init, standard_parser
 from ..config import get_from_email
 from ..log import get_logger
+from ..risk import READ_ONLY, writes_with_apply
 
 log = get_logger("event_orchestration")
 
 
 # ---------------- export ----------------
+
+EXPORT_RISK = READ_ONLY
+
 
 def build_export_parser():
     p = standard_parser("Export PagerDuty Event Orchestration rules to JSON files.")
@@ -76,6 +80,9 @@ def export_main(argv=None) -> int:
 
 
 # ---------------- diff / apply ----------------
+
+APPLY_RISK = writes_with_apply()
+
 
 def build_apply_parser():
     p = standard_parser(
