@@ -109,3 +109,25 @@ def test_the_input_hash_is_the_same_whatever_the_mode_flags(client):
     flagged = run(client, "ui-writer", argv=["--note", "a", "--dry-run", "-y"]).json()
     assert plain["argv"] == ["--note", "a", "--dry-run"]
     assert plain["input_hash"] == flagged["input_hash"]
+
+
+def test_a_payload_under_a_preview_header_is_shown_and_hashed(client):
+    first = run(client, "ui-writer", values={"payload": "Night"}).json()
+    lines = [(line["kind"], line["text"]) for line in first["review"]["lines"]]
+    assert lines[0] == ("add", "[dry-run] would POST /alert_grouping_settings with:")
+    assert ("detail", '    "name": "Night"') in lines
+    assert all(kind != "context" for kind, _ in lines)
+    other = run(client, "ui-writer", values={"payload": "Day"}).json()
+    assert first["output_hash"] != other["output_hash"]
+
+
+def test_numbered_preview_lines_are_read_by_their_verb(client):
+    review = run(client, "ui-writer", values={"windows": 2}).json()["review"]
+    assert review["counts"] == {"add": 2, "change": 0, "delete": 0, "other": 0}
+
+
+def test_a_dry_run_that_did_not_finish_has_an_incomplete_review(client):
+    failed = run(client, "ui-writer", values={"fail": True}).json()
+    assert failed["outcome"] == "failed"
+    assert failed["review"]["complete"] is False
+    assert run(client, "ui-writer", values={}).json()["review"]["complete"] is True

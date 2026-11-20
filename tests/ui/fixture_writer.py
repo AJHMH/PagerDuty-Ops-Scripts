@@ -2,6 +2,7 @@
 the engine's styles: diff lines on stdout and "[dry-run] ..." lines on stderr."""
 
 import argparse
+import json
 import sys
 
 from pagerduty_ops.cli import add_logging_args, add_token_args
@@ -20,6 +21,12 @@ def build_parser():
     p.add_argument("--extra-delete", action="store_true", help="Preview one more deletion.")
     p.add_argument("--only-unrecognised", action="store_true",
                    help="Preview only lines in a style the review can't classify.")
+    p.add_argument("--payload", help="Preview a POST whose JSON payload follows the header "
+                                     "(like pd-alert-grouping).")
+    p.add_argument("--windows", type=int, default=0,
+                   help="Preview this many '[dry-run] line N: would create ...' lines "
+                        "(like pd-bulk-maintenance-window).")
+    p.add_argument("--fail", action="store_true", help="Exit 1 before previewing anything.")
     return p
 
 
@@ -27,6 +34,19 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if not args.dry_run:
         sys.stdout.write("APPLIED\n")  # the UI must never get here in Phase 1
+        return 0
+    if args.fail:
+        sys.stderr.write("Error: could not reach PagerDuty\n")
+        return 1
+    if args.payload is not None:
+        sys.stderr.write("[dry-run] would POST /alert_grouping_settings with:\n")
+        sys.stderr.write(json.dumps({"alert_grouping_setting": {"name": args.payload}},
+                                    indent=2) + "\n")
+        return 0
+    if args.windows:
+        for n in range(args.windows):
+            sys.stderr.write(f"[dry-run] line {n + 2}: would create window for P{n} "
+                             "2026-12-01T00:00:00Z -> 2026-12-01T02:00:00Z\n")
         return 0
     if args.only_unrecognised:  # like pd-sn-sync: "[dry-run] <table> <key>: <values>"
         sys.stderr.write("[dry-run] sys_user 'ann' (S1): {'pd_id': 'PU1'}\n")

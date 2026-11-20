@@ -18,7 +18,13 @@ function ReviewPanel({ review }: { review: Review }) {
         <span className="delete">{SIGN.delete}{del} to delete</span>
         {other > 0 && <span className="other">{other} other change{other === 1 ? "" : "s"}</span>}
       </p>
-      {add + change + del + other === 0 && <p>No changes: everything already matches.</p>}
+      {!review.complete && (
+        <p className="error" role="alert">The dry run didn't finish, so what it would change
+          couldn't be determined. See the log below.</p>
+      )}
+      {review.complete && add + change + del + other === 0 && (
+        <p>No changes: everything already matches.</p>
+      )}
       <ol className="diff">
         {lines.map((l, i) => <li key={i} className={l.kind}>{l.text}</li>)}
       </ol>

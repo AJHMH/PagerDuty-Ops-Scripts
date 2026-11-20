@@ -19,10 +19,20 @@ DELETE = {"delete", "remove", "detach", "deactivate", "clear", "prune", "unset"}
 # "[dry-run]" lines that only narrate. Any other unrecognised "[dry-run]" line is counted as
 # "other": a preview line is a change unless known otherwise, so the review can never claim
 # "no changes" for a style it doesn't recognise (e.g. pd-sn-sync's "<table> <key>: <values>").
-INFO = {"previewing", "no", "nothing", "line", "skip", "skipping", "would", "summary"}
+INFO = {"previewing", "no", "nothing", "skip", "skipping", "would", "summary"}
 # Flags that choose the mode, not the inputs: a dry run and its apply share an input hash.
 MODE_FLAGS = frozenset({"--dry-run", "--apply", "-y", "--yes"})
-DRY_RUN = re.compile(r"^\[dry-run\]\s+(?:would\s+)?([A-Za-z]+)", re.IGNORECASE)
+# "[dry-run] [line N:] [would] <verb> ..." -- e.g. pd-bulk-maintenance-window's
+# "[dry-run] line 3: would create window for ..." is read by its verb, "create".
+DRY_RUN = re.compile(r"^\[dry-run\]\s+(?:line\s+\d+:\s*)?(?:would\s+)?([A-Za-z]+)",
+                     re.IGNORECASE)
+PREVIEW_KINDS = ("add", "change", "delete", "other", "info")
+
+
+def _continues(line: str) -> bool:
+    """A payload line under a preview header ending in ':' (e.g. pd-alert-grouping prints
+    "[dry-run] would POST ... with:" and then the JSON it would send)."""
+    return bool(line) and (line[0].isspace() or line[0] in '{}[]"')
 
 
 def classify(line: str) -> str:
@@ -46,13 +56,25 @@ def classify(line: str) -> str:
     return "context"
 
 
-def review(stdout: str, stderr: str) -> dict:
-    lines = [{"stream": stream, "kind": classify(line), "text": line}
-             for stream, text in (("stdout", stdout), ("stderr", stderr))
-             for line in text.splitlines() if line.strip()]
+def review(stdout: str, stderr: str, outcome: str | None = "succeeded") -> dict:
+    """Counts and classified lines. A payload under a preview header is "detail": shown and
+    hashed with its header, not counted. `complete` is false when the dry run didn't
+    succeed, so the absence of changes can't be read as "nothing to change"."""
+    lines = []
+    for stream, text in (("stdout", stdout), ("stderr", stderr)):
+        under_header = False
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            if under_header and _continues(line):
+                kind = "detail"
+            else:
+                kind = classify(line)
+                under_header = kind in PREVIEW_KINDS and line.rstrip().endswith(":")
+            lines.append({"stream": stream, "kind": kind, "text": line})
     counts = {k: sum(1 for line in lines if line["kind"] == k)
               for k in ("add", "change", "delete", "other")}
-    return {"counts": counts, "lines": lines}
+    return {"counts": counts, "lines": lines, "complete": outcome == "succeeded"}
 
 
 def _digest(material) -> str:

@@ -52,3 +52,4 @@ th, td { text-align: left; padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1p
         border-radius: 6px; font-family: ui-monospace, monospace; font-size: 0.9rem;
         overflow-x: auto; white-space: pre; }
 .diff .info, .diff .context { color: var(--muted); }
+.diff .detail { color: var(--fg); opacity: 0.85; }

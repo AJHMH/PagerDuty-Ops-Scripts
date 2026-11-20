@@ -77,6 +77,8 @@ Only Operators and Approvers can dry-run; Viewers get 403. The Run is stored wit
 
 Only lines that *start* with these markers count, in either stream. Log lines stay as context, which the UI hides until asked. The review gives counts and each classified line.
 
+A `[dry-run] line N:` prefix is skipped, and the line is read by the verb that follows. Indented or bracketed lines under a preview header ending in `:` (for example the JSON payload after `[dry-run] would POST … with:`) are shown and hashed as part of that preview. If the dry run didn't succeed, the review says its changes couldn't be determined instead of "No changes".
+
 A `[dry-run]` line whose verb isn't recognised counts as an "other change", unless it is a known narration line such as "previewing …". So the review never claims "No changes" for a preview style it doesn't recognise, for example `pd-sn-sync`'s `[dry-run] <table> <key>: <values>`.
 
 **Hashes.** Every Run stores two, ready for #73 to match an apply to the reviewed dry run:

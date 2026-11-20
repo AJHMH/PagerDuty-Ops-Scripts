@@ -79,11 +79,12 @@ export interface Run {
   review: Review | null;
 }
 
-export type LineKind = "add" | "change" | "delete" | "other" | "info" | "context";
+export type LineKind = "add" | "change" | "delete" | "other" | "detail" | "info" | "context";
 
 export interface Review {
   counts: { add: number; change: number; delete: number; other: number };
   lines: { stream: "stdout" | "stderr"; kind: LineKind; text: string }[];
+  complete: boolean;  // false when the dry run didn't succeed
 }
 
 export class ApiError extends Error {

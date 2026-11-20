@@ -91,7 +91,8 @@ def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
         "exit_code": run.exit_code, "outcome": run.outcome,
         "stdout": run.stdout, "stderr": run.stderr, "message": _message(run),
         "kind": run.kind, "input_hash": run.input_hash, "output_hash": run.output_hash,
-        "review": review(run.stdout, run.stderr) if run.kind == "dry-run" else None,
+        "review": (review(run.stdout, run.stderr, run.outcome) if run.kind == "dry-run"
+                   else None),
         "files": [file_dict(f) for f in files],
     }
 
