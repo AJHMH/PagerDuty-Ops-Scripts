@@ -70,6 +70,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-apply-tags` | pd_apply_tags.py | **yes** | Tag add/remove from CSV |
 | `pd-bulk-extensions` | pd_bulk_extensions.py | **yes** | Attach extensions to services (idempotent) |
 | `pd-alert-grouping` | pd_alert_grouping.py | **yes** | Alert grouping settings (list/attach/CRUD) |
+| `pd-validate` | pd_validate.py | no | Consistency checks across teams/users/services/EPs/schedules (+ ServiceNow); remediation plan |
 | `pd-sn-sync` | pd_sn_sync.py | **yes** (ServiceNow) | Reconcile PD IDs stored in ServiceNow groups/users; plan → rehearse → apply ([guide](docs/servicenow.md)) |
 
 Per-command usage and examples: [docs/usage.md](docs/usage.md).

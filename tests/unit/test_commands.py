@@ -16,7 +16,7 @@ COMMAND_MODULES = [
     "list_webhooks", "patch_role",
     "remove_team_members", "rename_resources", "scim_user_audit",
     "service_urgency", "sn_sync", "standards_report", "team_members",
-    "update_team_roles", "v3_schedules",
+    "update_team_roles", "v3_schedules", "validate",
 ]
 
 

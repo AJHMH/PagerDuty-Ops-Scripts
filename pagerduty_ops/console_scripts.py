@@ -127,3 +127,7 @@ def pd_eo_apply() -> None:
 
 def pd_sn_sync() -> None:
     _entry("sn_sync")
+
+
+def pd_validate() -> None:
+    _entry("validate")

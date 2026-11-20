@@ -104,6 +104,40 @@ pd-team-members --team-id PXXXXXX -f csv      # or PD_TEAM_ID
 pd-eo-export -o event_orchestrations/         # commit the directory to git
 ```
 
+### pd-validate (read-only consistency checks)
+```bash
+pd-validate                                         # all checks; exit 1 on any error finding
+pd-validate --fail-on warning -f csv -o findings.csv
+pd-validate --checks team_staffing,ep_coverage_gaps
+pd-validate --config validate.json --plan-out fixes.json      # remediation plan for pd-reorg
+pd-validate --servicenow --instance dallastx                  # + ServiceNow checks 9/10
+```
+
+| # | Check id | Default severity | Finds | Remediation plan |
+|---|---|---|---|---|
+| 1 | `user_not_on_owning_team` | warning | user on a team's schedule/EP but not on that team | `add_member` (single owning team) |
+| 2 | `service_ep_team_mismatch` | warning | service EP with no/several teams; EP targeting other teams' schedules | `move_resource` EP (when its schedules agree on one team) |
+| 3 | `ep_coverage_gaps` | error / warning | EP with no rules or empty rules; schedule with no users; coverage < 100% over `coverage_days` | — |
+| 4 | `unreachable_responders` | error | on-call user missing, with no contact methods, or no high-urgency rule | — |
+| 5 | `team_staffing` | warning | team with no members, no manager, or one member | — |
+| 6 | `user_utilization` | info | user on no team; responder-capable role on no rotation | — |
+| 7 | `orphaned_resources` | warning / info | schedule/EP/service with no team; unused schedule/EP | — |
+| 8 | `naming_conventions` | info | names not matching `naming` regexes | — (see `pd-rename-resources`) |
+| 9 | `servicenow_integration` | warning | service without a ServiceNow extension; with `--servicenow`, no group references it | — |
+| 10 | `servicenow_drift` | warning | `pd-sn-sync` drift (needs `--servicenow`) | use `pd-sn-sync plan` |
+
+Config (`--config`, JSON; every key optional):
+```json
+{
+  "checks": {"user_utilization": {"enabled": false}, "naming_conventions": {"severity": "warning"}},
+  "coverage_days": 14,
+  "servicenow_extension_pattern": "servicenow",
+  "naming": {"services": "^[A-Z]{2,5} - ", "teams": "^DAL "},
+  "default_member_role": "responder"
+}
+```
+The validator never writes. `--plan-out` produces a `pd-reorg` plan. Review it, then run `pd-reorg apply fixes.json --dry-run`.
+
 ## Write commands
 
 ### pd-eo-apply (diff-first)
