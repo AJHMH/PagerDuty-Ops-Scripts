@@ -5,8 +5,12 @@ from __future__ import annotations
 from ..api import fetch_all
 from ..cli import init, standard_parser
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 FIELDNAMES = ["id", "name", "description"]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

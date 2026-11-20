@@ -7,12 +7,16 @@ import sys
 
 from ..bulkops import apply_name_affix_update
 from ..cli import init, standard_parser
+from ..risk import writes_with_dry_run
 
 RESOURCE_KIND = {
     "services": "service",
     "schedules": "schedule",
     "escalation_policies": "escalation_policy",
 }
+
+
+RISK = writes_with_dry_run()
 
 
 def build_parser():

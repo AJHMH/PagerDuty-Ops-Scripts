@@ -35,6 +35,7 @@ from ..cli import (
 from ..log import get_logger
 from ..pdstate import PDState, ref_ids
 from ..plan import load_plan, new_plan, plan_hash, write_plan
+from ..risk import READ_ONLY, writes_with_dry_run
 
 log = get_logger("reorg")
 
@@ -47,6 +48,13 @@ RESOURCE_KINDS = ("escalation_policy", "schedule")
 OP_ORDER = {"add_member": 0, "set_team_role": 1, "set_account_role": 2, "move_resource": 3,
             "remove_resource_team": 4, "remove_member": 5}
 YAML_TEAM_KEYS = {"name", "members", "escalation_policies", "schedules", "services"}
+
+
+RISK = {
+    "export": READ_ONLY,
+    "plan": READ_ONLY,
+    "apply": writes_with_dry_run(),
+}
 
 
 def build_parser():

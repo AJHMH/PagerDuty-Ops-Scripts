@@ -10,8 +10,12 @@ import sys
 from ..api import PDApiError, fetch_all, request
 from ..cli import confirm, finish_bulk, init, standard_parser
 from ..log import get_logger
+from ..risk import writes_with_dry_run
 
 log = get_logger("service_urgency")
+
+
+RISK = writes_with_dry_run()
 
 
 def build_parser():

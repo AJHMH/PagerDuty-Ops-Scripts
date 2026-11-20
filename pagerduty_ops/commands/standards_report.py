@@ -6,10 +6,14 @@ from ..api import request
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("standards_report")
 
 FIELDNAMES = ["resource_id", "resource_name", "passing", "total", "failing_standards"]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

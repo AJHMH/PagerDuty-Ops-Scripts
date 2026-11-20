@@ -39,6 +39,7 @@ from ..cli import (
 from ..log import get_logger
 from ..pdstate import PDState, ref_ids
 from ..plan import load_plan, new_plan, plan_hash, write_plan
+from ..risk import DELETES_SCIM_USER, READ_ONLY, writes_with_dry_run
 from .scim_user_audit import (
     SCIM_HEADERS,
     fetch_scim_users,
@@ -52,6 +53,13 @@ PATCH_SCHEMA = "urn:ietf:params:scim:api:messages:2.0:PatchOp"
 PATCH_HEADERS = {**SCIM_HEADERS, "Content-Type": "application/scim+json"}
 DEFAULT_MAX_DELETES = 10
 DEFAULT_MAX_PLAN_AGE_HOURS = 24
+
+
+RISK = {
+    "plan": READ_ONLY,
+    "apply": writes_with_dry_run(irreversible_plan_items=(DELETES_SCIM_USER,),
+                                 cap_flags=("--max-deletes",)),
+}
 
 
 def build_parser():

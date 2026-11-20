@@ -8,6 +8,7 @@ from __future__ import annotations
 from ..api import fetch_all
 from ..cli import init, standard_parser
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 from .list_incidents import parse_multi
 
 FIELDNAMES = [
@@ -19,6 +20,9 @@ FIELDNAMES = [
     "team_names",
     "html_url",
 ]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

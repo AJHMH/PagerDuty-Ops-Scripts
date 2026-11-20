@@ -42,7 +42,7 @@ The PagerDuty service a ServiceNow group points at, from which that group's othe
 _Avoid_: Primary service
 
 **Irreversible operation**:
-A change that cannot be undone once applied: SCIM user deletion, Event Rules conversion, any prune, and any ServiceNow production apply.
+A change that cannot be undone once applied: SCIM user deletion, Event Rules conversion, a prune of a desired-state file (business services, custom fields, templates), clearing PagerDuty IDs in ServiceNow, and any ServiceNow production apply. Team reorgs, including `pd-reorg --prune`, and single-object deletes are not: what they remove can be re-added.
 _Avoid_: Destructive change, dangerous action
 
 ### Running the tools

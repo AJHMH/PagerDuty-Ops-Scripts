@@ -18,8 +18,12 @@ from ..bulkops import load_csv_rows, parse_iso8601
 from ..cli import confirm, finish_bulk, init, standard_parser
 from ..config import get_from_email
 from ..log import get_logger
+from ..risk import writes_with_dry_run
 
 log = get_logger("bulk_maintenance_window")
+
+
+RISK = writes_with_dry_run()
 
 
 def build_parser():

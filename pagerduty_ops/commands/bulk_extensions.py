@@ -14,8 +14,12 @@ from ..api import PDApiError, fetch_all, request
 from ..bulkops import load_csv_rows
 from ..cli import confirm, finish_bulk, init, standard_parser
 from ..log import get_logger
+from ..risk import writes_with_dry_run
 
 log = get_logger("bulk_extensions")
+
+
+RISK = writes_with_dry_run()
 
 
 def build_parser():

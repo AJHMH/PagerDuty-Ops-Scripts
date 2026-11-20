@@ -16,8 +16,12 @@ from ..cli import init, standard_parser
 from ..config import get_team_id
 from ..log import get_logger
 from ..output import render_rows
+from ..risk import writes_with_dry_run
 
 log = get_logger("remove_team_members")
+
+
+RISK = writes_with_dry_run()
 
 
 def build_parser():

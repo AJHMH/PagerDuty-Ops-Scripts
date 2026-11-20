@@ -30,6 +30,7 @@ from ..cli import (
 )
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY, writes_with_dry_run
 
 log = get_logger("subscriptions")
 
@@ -38,6 +39,12 @@ SUBSCRIBERS = ("user", "team")
 SUBSCRIBABLES = ("business_service", "incident")
 COLUMNS = ["action", "subscriber_kind", "subscriber_id", "subscribable_kind", "subscribable_id"]
 BATCH = 50
+
+
+RISK = {
+    "list": READ_ONLY,
+    "apply": writes_with_dry_run(),
+}
 
 
 def build_parser():

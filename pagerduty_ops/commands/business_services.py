@@ -24,11 +24,18 @@ import sys
 from ..api import PDApiError, paginate, request
 from ..cli import EXIT_FAILURES, EXIT_OK, EXIT_USAGE, add_logging_args, add_token_args, init
 from ..log import get_logger
+from ..risk import READ_ONLY, writes_with_apply
 
 log = get_logger("business_services")
 
 FIELDS = ("description", "point_of_contact", "team_id")
 DEFAULT_MAX_DELETES = 5
+
+
+RISK = {
+    "export": READ_ONLY,
+    "apply": writes_with_apply(irreversible_flags=("--prune",), cap_flags=("--max-deletes",)),
+}
 
 
 def build_parser():

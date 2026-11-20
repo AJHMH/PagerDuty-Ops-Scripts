@@ -13,12 +13,16 @@ from ..api import paginate, request
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY
 
 log = get_logger("v3_schedules")
 
 V3_RESOURCE = "v3/schedules"
 EARLY_ACCESS_HEADERS = {"X-EARLY-ACCESS": "flexible-schedules-early-access"}
 FIELDNAMES = ["id", "name", "type", "self"]
+
+
+RISK = READ_ONLY
 
 
 def build_parser():

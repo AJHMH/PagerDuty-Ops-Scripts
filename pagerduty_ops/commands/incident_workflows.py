@@ -36,6 +36,7 @@ from ..cli import (
 )
 from ..log import get_logger
 from ..output import render_rows, write_payload
+from ..risk import READ_ONLY, writes_with_dry_run
 
 log = get_logger("incident_workflows")
 
@@ -43,6 +44,14 @@ TRIGGER_COLUMNS = ["action", "trigger_id", "service_id", "workflow_name", "trigg
 ACTIONS = ("attach", "detach")
 # Server-managed fields that change without anyone editing the workflow.
 VOLATILE_KEYS = {"self", "html_url", "created_at", "updated_at", "summary"}
+
+
+RISK = {
+    "export": READ_ONLY,
+    "diff": READ_ONLY,
+    "triggers-export": READ_ONLY,
+    "triggers-apply": writes_with_dry_run(),
+}
 
 
 def build_parser():
