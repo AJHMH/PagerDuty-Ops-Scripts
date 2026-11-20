@@ -84,3 +84,44 @@ def test_render_csv_ignores_extra_keys():
     rows = [{"id": "P1", "name": "A", "unexpected": "x"}]
     out = render_rows(rows, FIELDS, "csv")
     assert "unexpected" not in out
+
+
+# ---------- stdout bytes are the same on every platform (ADR 0005) ----------
+
+def _stdout_bytes(fmt, rows, env_extra=None):
+    """Run a command entry point (cli.run) in a real subprocess, so the real stdout is used."""
+    import os
+    import subprocess
+    import sys
+
+    code = ("import json, sys\n"
+            "from pagerduty_ops.cli import run\n"
+            "from pagerduty_ops.output import render_rows, write_payload\n"
+            "rows = json.loads(sys.argv[1])\n"
+            "def main(argv):\n"
+            f"    write_payload(render_rows(rows, list(rows[0]), {fmt!r}))\n"
+            "    print('print:', rows[0][list(rows[0])[0]])\n"
+            "    return 0\n"
+            "run(main)\n")
+    env = {**os.environ, **(env_extra or {})}
+    done = subprocess.run([sys.executable, "-c", code, json.dumps(rows)],
+                          capture_output=True, env=env, check=False)
+    assert done.returncode == 0, done.stderr.decode("utf-8", "replace")
+    return done.stdout
+
+
+def test_csv_on_stdout_has_one_crlf_per_row():
+    # Windows text stdout turns "\n" into "\r\n", so csv's "\r\n" became "\r\r\n".
+    out = _stdout_bytes("csv", [{"name": "Ada"}, {"name": "Grace"}])
+    assert out == b"name\r\nAda\r\nGrace\r\nprint: Ada\n"
+
+
+def test_stdout_is_utf8_even_when_the_console_code_page_is_not():
+    # Windows pipes default to a legacy code page (e.g. cp1252) that cannot encode many
+    # names; data on stdout is always UTF-8.
+    out = _stdout_bytes("json", [{"name": "Łukasz Żółć"}], {"PYTHONIOENCODING": "cp1252"})
+    payload = out.decode("utf-8").rsplit("print:", 1)[0]
+    assert json.loads(payload) == [{"name": "Łukasz Żółć"}]
+    out = _stdout_bytes("table", [{"name": "Łukasz"}], {"PYTHONIOENCODING": "cp1252"})
+    assert "Łukasz" in out.decode("utf-8")
+    assert out.decode("utf-8").endswith("print: Łukasz\n")

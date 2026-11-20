@@ -14,8 +14,8 @@ shims. Details live in `docs/` — this file is the short list of rules.
 | Integration tests (opt-in, read-only) | `PD_TEST_TOKEN=... python -m pytest tests/integration` |
 | Demo output (no token) | `python demo_sample_output.py` |
 
-CI (`.github/workflows/ci.yml`) runs ruff, pytest on 3.10/3.12, pip-audit, and a gitleaks
-history scan. Run the unit suite and ruff before every commit.
+CI (`.github/workflows/ci.yml`) runs ruff, pytest on 3.10/3.12 (Linux) and 3.12 (Windows),
+pip-audit, and a gitleaks history scan. Run the unit suite and ruff before every commit.
 
 ## Layout
 
@@ -71,6 +71,8 @@ history scan. Run the unit suite and ruff before every commit.
 ## Conventions
 
 - stdout is data only; all diagnostics go to stderr via `pagerduty_ops.log.get_logger`.
+  `cli.run()` makes stdout UTF-8 with no newline translation, so output is byte-identical on
+  Windows; entry points must go through it.
 - Secrets come from the environment (`PD_API_TOKEN`, etc.) or a secret store — never CLI
   arguments, never logged, never committed. Log only the redacted error envelope.
 - Ruff line length 100; match surrounding style.

@@ -71,7 +71,7 @@ Scripts and CI rely on these: `0` success (including dry runs and nothing to do)
 
 ## Testing and verification
 
-Run both before every commit. CI (`.github/workflows/ci.yml`) runs them too, on Python 3.10 and 3.12, along with `pip-audit` and a gitleaks history scan.
+Run both before every commit. CI (`.github/workflows/ci.yml`) runs them too, on Python 3.10 and 3.12 on Linux and Python 3.12 on Windows (the UI host's platform), along with `pip-audit` and a gitleaks history scan.
 
 ```bash
 python -m pytest tests/unit

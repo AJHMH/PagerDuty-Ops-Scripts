@@ -110,8 +110,21 @@ def finish_bulk(succeeded: int, failed: int, *, dry_run: bool, label: str = "ite
     return EXIT_FAILURES if failed else EXIT_OK
 
 
+def use_utf8_streams() -> None:
+    """Make stdout/stderr UTF-8, and stdout byte-identical on every platform.
+
+    On Windows a piped stdout defaults to the console code page (often cp1252, which cannot
+    encode many names) and turns csv's "\\r\\n" into "\\r\\r\\n". stdout is data, so it gets no
+    newline translation; stderr keeps the platform's newlines.
+    """
+    for stream, newline in ((sys.stdout, "\n"), (sys.stderr, None)):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(encoding="utf-8", errors="backslashreplace", newline=newline)
+
+
 def run(main_fn, argv=None) -> None:
     """Entry-point wrapper for shims/console scripts: maps exceptions to exit codes."""
+    use_utf8_streams()
     try:
         sys.exit(main_fn(argv))
     except PDApiError as e:
