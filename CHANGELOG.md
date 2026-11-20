@@ -59,6 +59,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   v3 schedule or an escalation policy, and when v3 membership can't be checked. `apply` re-checks live, refuses plans older than 24 hours,
   and caps deletions (`--max-deletes`, default 10). Orphans are deleted only with
   `--delete-orphans`.
+- `pd-business-services` (export / apply): name-keyed JSON for business service definitions
+  (description, point of contact, owning team) with a diff-first apply. Deletions need
+  `--prune` and are capped by `--max-deletes`.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

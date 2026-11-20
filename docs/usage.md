@@ -351,6 +351,19 @@ This is the write side of `pd-scim-user-audit`, and it uses the same IdP CSV. **
 - **Missing users:** users missing from PagerDuty are reported, not created; provisioning belongs to the IdP.
 - **Token:** needs SCIM enabled with `users.write`.
 
+### pd-business-services (export → diff-first apply)
+```bash
+pd-business-services export -o business_services.json        # commit to git
+pd-business-services apply -i business_services.json         # diff only (no writes)
+pd-business-services apply -i business_services.json --apply -y
+pd-business-services apply -i business_services.json --apply -y --prune [--max-deletes 5]
+```
+- **The file** is keyed by business-service `name` and contains `description`, `point_of_contact` and `team_id`. `team_name` is informational and ignored on apply.
+- **Validation:** before any write, it rejects duplicate names, an unknown `team_id`, unknown keys, and live names that more than one business service shares.
+- **Deleting:** removing business services that aren't in the file needs `--prune` and is capped by `--max-deletes` (default 5), because deleting a business service stops new incidents for it.
+- **Renaming:** a rename in the file means delete and create. Rename in the UI instead to keep history and dependencies.
+- **Related commands:** dependencies are handled by `pd-service-deps` and subscribers by `pd-subscriptions`.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only
