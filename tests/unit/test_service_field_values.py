@@ -114,3 +114,30 @@ def test_failed_put_exits_one(tmp_path):
     p = tmp_path / "v.csv"
     p.write_text("service_id,tier\nPS1,gold\n")
     assert sfv.main(["apply", str(p), "-y"]) == 1
+
+
+def test_multi_value_escaping_round_trips():
+    d = defs()
+    values = ["us|east", "back\\slash", "prod"]
+    cell = sfv.format_value(values, d["envs"])
+    assert cell == "us\\|east|back\\\\slash|prod"
+    assert sfv.parse_cell(cell, d["envs"]) == values
+    with pytest.raises(ValueError):
+        sfv.parse_cell("bad\\escape", d["envs"])
+
+
+@pytest.mark.parametrize("text", ["nan", "inf", "-inf", "1e999"])
+def test_non_finite_floats_rejected(text):
+    defn = {"data_type": "float", "field_type": "single_value", "options": None}
+    with pytest.raises(ValueError):
+        sfv.parse_cell(text, defn)
+
+
+@responses.activate
+def test_unchanged_export_with_pipe_in_value_applies_as_noop(tmp_path, capsys):
+    mock_base({"PS1": {"envs": ["us|east", "prod"]}})
+    assert sfv.main(["export", "--fields", "envs"]) == 0
+    p = tmp_path / "v.csv"
+    p.write_text(capsys.readouterr().out)
+    assert sfv.main(["apply", str(p), "-y"]) == 0
+    assert all(c.request.method == "GET" for c in responses.calls)

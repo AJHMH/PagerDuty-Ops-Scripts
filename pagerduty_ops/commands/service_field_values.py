@@ -3,7 +3,8 @@
 CSV layout (export and apply use the same one):
   service_id, service_name, <field_name>, <field_name>, ...
 - service_name is informational and ignored on apply.
-- multi_value fields hold values joined with "|" (at most 10).
+- multi_value fields hold values joined with "|" (at most 10); a literal "|" or "\\"
+  inside a value is escaped as "\\|" / "\\\\" so export -> apply round-trips exactly.
 - An empty cell leaves the field unchanged; with --clear-empty it resets it (null).
 
 Field definitions are managed with `pd-custom-fields`; this command only sets values.
@@ -15,6 +16,7 @@ service containing only the fields that change.
 from __future__ import annotations
 
 import argparse
+import math
 import sys
 from datetime import datetime
 from urllib.parse import urlparse
@@ -97,11 +99,35 @@ def is_multi(defn) -> bool:
     return defn["field_type"].startswith("multi_value")
 
 
+def join_multi(values) -> str:
+    """Join multi-values with "|", escaping a literal backslash or "|" in any value."""
+    return MULTI_SEP.join(v.replace("\\", "\\\\").replace(MULTI_SEP, "\\" + MULTI_SEP)
+                          for v in values)
+
+
+def split_multi(text: str) -> list[str]:
+    """Inverse of join_multi: split on unescaped "|" and unescape each part."""
+    parts, cur, chars = [], [], iter(text)
+    for ch in chars:
+        if ch == "\\":
+            nxt = next(chars, None)
+            if nxt not in ("\\", MULTI_SEP):
+                raise ValueError("'\\' must be followed by '|' or '\\' in multi-value cells")
+            cur.append(nxt)
+        elif ch == MULTI_SEP:
+            parts.append("".join(cur))
+            cur = []
+        else:
+            cur.append(ch)
+    parts.append("".join(cur))
+    return parts
+
+
 def format_value(value, defn) -> str:
     if value is None:
         return ""
     if isinstance(value, list):
-        return MULTI_SEP.join(str(v) for v in value)
+        return join_multi(str(v) for v in value)
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
@@ -159,7 +185,10 @@ def _parse_scalar(text: str, defn: dict):
     if dt == "integer":
         return int(text)
     if dt == "float":
-        return float(text)
+        number = float(text)
+        if not math.isfinite(number):
+            raise ValueError("float must be finite (not nan, inf, or out of range)")
+        return number
     if dt == "datetime":
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
@@ -178,7 +207,7 @@ def _parse_scalar(text: str, defn: dict):
 def parse_cell(text: str, defn: dict):
     """CSV cell -> API value. Raises ValueError with a readable reason."""
     if is_multi(defn):
-        parts = [p.strip() for p in text.split(MULTI_SEP) if p.strip()]
+        parts = [p.strip() for p in split_multi(text) if p.strip()]
         if len(parts) > MAX_MULTI:
             raise ValueError(f"at most {MAX_MULTI} values")
         if len(set(parts)) != len(parts):

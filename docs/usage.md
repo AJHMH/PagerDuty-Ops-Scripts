@@ -289,8 +289,8 @@ pd-service-field-values apply field_values.csv -y
 pd-service-field-values apply field_values.csv --clear-empty -y   # empty cells reset to null
 ```
 The CSV is wide, with `service_id, service_name` followed by one column per field `name`. Export and apply use the same layout, so you can export, edit and apply.
-- **Validation:** every cell is checked before any write. It must be a known field and service, match the field's data type (`true/false`, integer, float, ISO 8601 with a timezone, `http(s)` URL, at most 200 characters), and, for fixed fields, be one of the allowed options.
-- **Multi-value fields** hold up to 10 values separated by `|`.
+- **Validation:** every cell is checked before any write. It must be a known field and service, match the field's data type (`true/false`, integer, a finite float, ISO 8601 with a timezone, `http(s)` URL, at most 200 characters), and, for fixed fields, be one of the allowed options.
+- **Multi-value fields** hold up to 10 values separated by `|`. Inside a value, a literal `|` is written as `\|` and a literal `\` as `\\`, so an unedited export applies with no changes.
 - **Only changes are written,** as one atomic `PUT` per service. A failed `PUT` applies none of that service's changes.
 - **Empty cells** leave the value unchanged unless you pass `--clear-empty`.
 - **Field definitions** are managed separately with `pd-custom-fields`.
