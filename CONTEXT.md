@@ -59,4 +59,16 @@ _Avoid_: Sign-off, rehearsal receipt (a receipt proves a rehearsal, not a person
 
 **Admin**:
 A member of the PagerDuty/ServiceNow admin team who operates these tools.
-_Avoid_: Operator, user (ambiguous with PagerDuty users)
+_Avoid_: User (ambiguous with PagerDuty users)
+
+**Viewer**:
+An admin who may read reports and the Run history but run nothing that writes.
+_Avoid_: Read-only user
+
+**Operator**:
+An admin who may also dry-run and apply changes that can be undone.
+_Avoid_: Editor, power user
+
+**Approver**:
+An Operator who may also give an Approval for another admin's irreversible operation.
+_Avoid_: Reviewer, supervisor
