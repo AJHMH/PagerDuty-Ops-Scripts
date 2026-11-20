@@ -47,9 +47,16 @@ def render_rows(rows: list[dict], fieldnames: list[str], fmt: str, raw: list | N
     )
 
 
-def write_payload(payload: str, path: str | None = None) -> None:
+def write_payload(payload: str, path: str | None = None, *, fmt: str | None = None) -> None:
+    """Write command output to `path`, or to stdout.
+
+    CSV files (``fmt="csv"`` with a path) start with a UTF-8 BOM so Excel opens accented
+    names correctly; every CSV reader here accepts it. stdout never gets a BOM, so pipes,
+    cron and the UI see plain UTF-8.
+    """
     if path:
-        with open(path, "w", encoding="utf-8", newline="") as f:
+        encoding = "utf-8-sig" if fmt == "csv" else "utf-8"
+        with open(path, "w", encoding=encoding, newline="") as f:
             f.write(payload)
         log.info("Wrote output to %s", path)
     else:

@@ -52,5 +52,6 @@ def main(argv=None) -> int:
     members = fetch_members(token, team_id)
     log.info("Found %d members on team %s.", len(members), team_id)
     rows = [member_row(m) for m in members]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=members), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=members),
+                  args.output, fmt=args.format)
     return 0

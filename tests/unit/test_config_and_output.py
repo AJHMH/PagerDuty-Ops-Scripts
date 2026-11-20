@@ -99,7 +99,7 @@ def _stdout_bytes(fmt, rows, env_extra=None):
             "from pagerduty_ops.output import render_rows, write_payload\n"
             "rows = json.loads(sys.argv[1])\n"
             "def main(argv):\n"
-            f"    write_payload(render_rows(rows, list(rows[0]), {fmt!r}))\n"
+            f"    write_payload(render_rows(rows, list(rows[0]), {fmt!r}), fmt={fmt!r})\n"
             "    print('print:', rows[0][list(rows[0])[0]])\n"
             "    return 0\n"
             "run(main)\n")
@@ -125,3 +125,32 @@ def test_stdout_is_utf8_even_when_the_console_code_page_is_not():
     out = _stdout_bytes("table", [{"name": "Łukasz"}], {"PYTHONIOENCODING": "cp1252"})
     assert "Łukasz" in out.decode("utf-8")
     assert out.decode("utf-8").endswith("print: Łukasz\n")
+
+
+# ---------- CSV files open cleanly in Excel and round-trip into apply commands ----------
+
+def test_csv_written_to_a_file_starts_with_a_utf8_bom(tmp_path):
+    from pagerduty_ops.output import write_payload
+
+    path = tmp_path / "out.csv"
+    write_payload(render_rows([{"name": "José"}], ["name"], "csv"), str(path), fmt="csv")
+    assert path.read_bytes() == "\ufeffname\r\nJosé\r\n".encode()
+
+
+def test_non_csv_files_get_no_bom(tmp_path):
+    from pagerduty_ops.output import write_payload
+
+    path = tmp_path / "out.json"
+    write_payload(render_rows([{"name": "José"}], ["name"], "json"), str(path), fmt="json")
+    assert not path.read_bytes().startswith(b"\xef\xbb\xbf")
+
+
+def test_exported_csv_round_trips_into_load_csv_rows(tmp_path):
+    from pagerduty_ops.bulkops import load_csv_rows
+    from pagerduty_ops.output import write_payload
+
+    path = tmp_path / "deps.csv"
+    write_payload(render_rows([{"service_id": "P1", "name": "José"}], ["service_id", "name"],
+                              "csv"), str(path), fmt="csv")
+    rows = load_csv_rows(str(path), {"service_id"}, require_values=("service_id",))
+    assert [(r["service_id"], r["name"]) for r in rows] == [("P1", "José")]

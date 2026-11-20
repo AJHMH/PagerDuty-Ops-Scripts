@@ -70,5 +70,5 @@ def main(argv=None) -> int:
             pages = [p for p in pages if needle in (p.get("name") or "").lower()]
         log.info("Found %d status pages.", len(pages))
         payload = render_rows([page_row(p) for p in pages], PAGE_FIELDS, args.format, raw=pages)
-    write_payload(payload, args.output)
+    write_payload(payload, args.output, fmt=args.format)
     return 0

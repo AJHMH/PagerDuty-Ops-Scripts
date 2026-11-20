@@ -412,7 +412,7 @@ def main(argv=None) -> int:
     findings = validator.run(checks, sn_state, fields)
     findings.sort(key=lambda f: (-SEV_RANK[f["severity"]], f["check"], f["resource_type"],
                                  f["resource_name"]))
-    write_payload(render_rows(findings, FIELDS, args.format), args.output)
+    write_payload(render_rows(findings, FIELDS, args.format), args.output, fmt=args.format)
 
     counts = {s: sum(1 for f in findings if f["severity"] == s) for s in SEVERITIES}
     log.info("Findings: %s", ", ".join(f"{k}={v}" for k, v in counts.items()))

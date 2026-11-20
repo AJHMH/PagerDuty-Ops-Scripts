@@ -122,5 +122,5 @@ def main(argv=None) -> int:
     incidents = list(paginate("incidents", token, params=params))
     log.info("Found %d incidents.", len(incidents))
     rows = [incident_row(i) for i in incidents]
-    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output, fmt=args.format)
     return 0

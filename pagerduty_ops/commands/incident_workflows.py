@@ -225,7 +225,7 @@ def triggers_export_main(args) -> int:
                          "workflow_name": (t.get("workflow") or {}).get("name", ""),
                          "trigger_type": t.get("trigger_type", "")})
     rows.sort(key=lambda r: (r["workflow_name"], r["trigger_id"], r["service_id"]))
-    write_payload(render_rows(rows, TRIGGER_COLUMNS, args.format), args.output)
+    write_payload(render_rows(rows, TRIGGER_COLUMNS, args.format), args.output, fmt=args.format)
     log.info("Exported %d trigger-service links (%d all-services triggers omitted).",
              len(rows), skipped)
     return EXIT_OK

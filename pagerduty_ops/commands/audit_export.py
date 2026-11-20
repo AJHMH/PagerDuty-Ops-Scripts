@@ -73,5 +73,6 @@ def main(argv=None) -> int:
                                    params=build_params(args)))
     log.info("Got %d audit records.", len(records))
     rows = [flatten(r) for r in records]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=records), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=records),
+                  args.output, fmt=args.format)
     return 0

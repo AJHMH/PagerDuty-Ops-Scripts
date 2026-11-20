@@ -91,5 +91,5 @@ def main(argv=None) -> int:
     services = fetch_all("services", token)
     webhooks = fetch_all("webhook_subscriptions", token)
     rows = build_rows(teams, schedules, policies, services, webhooks)
-    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output, fmt=args.format)
     return 0

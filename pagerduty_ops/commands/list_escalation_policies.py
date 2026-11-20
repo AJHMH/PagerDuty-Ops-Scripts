@@ -89,5 +89,6 @@ def main(argv=None) -> int:
         label="escalation policies",
     )
     rows = [policy_row(p) for p in policies]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=policies), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=policies),
+                  args.output, fmt=args.format)
     return 0

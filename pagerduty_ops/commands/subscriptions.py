@@ -97,7 +97,7 @@ def list_main(args) -> int:
                     raise
                 log.error("%s %s: %s", args.by, obj["id"], e)
     rows = [dict(zip(COLUMNS, ("subscribe", *f), strict=True)) for f in sorted(found)]
-    write_payload(render_rows(rows, COLUMNS, args.format), args.output)
+    write_payload(render_rows(rows, COLUMNS, args.format), args.output, fmt=args.format)
     log.info("Exported %d subscriptions.", len(rows))
     return EXIT_OK
 

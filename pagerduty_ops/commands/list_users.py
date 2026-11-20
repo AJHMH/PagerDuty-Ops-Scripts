@@ -45,5 +45,5 @@ def main(argv=None) -> int:
             if needle in (u.get("name") or "").lower() or needle in (u.get("email") or "").lower()
         ]
     rows = [user_row(u) for u in users]
-    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output, fmt=args.format)
     return 0

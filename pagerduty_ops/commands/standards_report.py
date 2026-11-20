@@ -61,5 +61,5 @@ def main(argv=None) -> int:
     raw = data.get("resources") or data.get("scores") or []
     log.info("Got %d resources.", len(raw))
     rows = score_rows(raw, failing_only=args.failing_only)
-    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output, fmt=args.format)
     return 0

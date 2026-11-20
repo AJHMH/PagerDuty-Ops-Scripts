@@ -173,7 +173,7 @@ def export_main(args) -> int:
                   failed)
         return EXIT_FAILURES
     write_payload(render_rows(rows, [*FIXED_COLUMNS, *names], args.format, raw=raw),
-                  args.output)
+                  args.output, fmt=args.format)
     log.info("Exported %d services x %d fields.", len(rows), len(names))
     return EXIT_OK
 

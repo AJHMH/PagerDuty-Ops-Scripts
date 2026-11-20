@@ -1,6 +1,6 @@
 # Usage — command catalog
 
-Conventions shared by every command: `--help`; `-v/--verbose`, `-q/--quiet`, `--log-file FILE`; token from `PD_API_TOKEN` (or `--prompt` locally). Read commands: `-f table|csv|json`, `-o FILE`. Write commands: `--dry-run` and `-y/--yes` — **always review a `--dry-run` first**, then re-run with `-y`. Legacy `python pd_*.py` names accept identical arguments.
+Conventions shared by every command: `--help`; `-v/--verbose`, `-q/--quiet`, `--log-file FILE`; token from `PD_API_TOKEN` (or `--prompt` locally). Read commands: `-f table|csv|json`, `-o FILE`. Output is UTF-8. CSV written with `-o` starts with a UTF-8 byte-order mark so Excel opens accented names correctly; CSV on stdout has none, for pipes, cron and the UI. CSV inputs accept files with or without one, including Excel's "CSV UTF-8" format. On Windows, use `-o file.csv` rather than `> file.csv` for files you'll open in Excel. Write commands: `--dry-run` and `-y/--yes` — **always review a `--dry-run` first**, then re-run with `-y`. Legacy `python pd_*.py` names accept identical arguments.
 
 ## Read / export commands
 
