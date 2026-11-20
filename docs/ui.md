@@ -3,10 +3,13 @@
 A thin web layer over the CLI engine for the PagerDuty/ServiceNow admin team. The design is
 recorded in [CONTEXT.md](../CONTEXT.md) and ADRs 0001–0015; the spec is issue #62.
 
-**Status: Phase 1 (#66, #67).**
+**Status: Phase 1 complete (#66, #67, #72).**
 - An admin signs in with Okta.
-- They pick a command with a **read-only** mode and fill in its generated form, uploading any input files.
-- They run it and see the stored Run, with its output files ready to download.
+- They pick a command and fill in its generated form, uploading any input files.
+- They see the stored Run, with its output files ready to download.
+- Viewers run read-only commands.
+- Operators and Approvers can also **dry-run** commands that write, and review what would change.
+- Nothing is applied until Phase 2.
 
 Commands that write are refused until Apply arrives in Phase 2.
 
@@ -17,6 +20,7 @@ Commands that write are refused until Apply arrives in Phase 2.
 | HTTP API | `pagerduty_ops_ui/app.py` | FastAPI. `GET /api/me`, `GET /api/commands`, `GET /api/commands/{name}/form`, `POST /api/runs`, `GET /api/runs/{id}`, `GET /api/runs/{id}/files/{file_id}` |
 | Generated forms | `forms.py` | One field per argument, built from the command's own parser |
 | Run files | `files.py` | Uploads and outputs stored in the Run's directory, each with a SHA-256 hash |
+| Dry-run review | `review.py` | Classifies a dry run's preview into additions, changes and deletions, and computes the Run's input and output hashes |
 | Sign-in and roles | `identity.py`, `roles.py` | Okta OIDC with PKCE. Roles come from the `PD-Ops-Viewer`, `PD-Ops-Operator` and `PD-Ops-Approver` groups (ADR 0008) |
 | What may run | `gate.py` | Uses only the engine's risk declarations and `assess()` (ADR 0010) |
 | Running a command | `runner.py` | Each Run is the command's own entry point in its own process, through `cli.run()` (ADR 0004) |
@@ -57,6 +61,25 @@ argparse can't say which arguments are files, so `FILE_ROLES` in `forms.py` name
 - **Outputs:** anything else the command writes to its directory is an output.
 - **Hashes and downloads:** every file is recorded with its size and SHA-256. A download is refused (409) if the file has changed since the Run.
 - **Messages:** a Run that didn't succeed carries the command's last log line as its `message`, for example a usage error.
+
+## Dry runs (#72)
+
+A command, or subcommand, whose risk declaration says it writes always runs as a dry run:
+- **`--dry-run` commands:** the gate adds `--dry-run`.
+- **Diff-first commands:** these preview unless given `--apply`. An explicit `--apply` is refused (403).
+- **Final check:** the engine's `assess()` re-checks the final argv, and the Run only starts if the engine agrees it is a dry run.
+
+Only Operators and Approvers can dry-run; Viewers get 403. The Run is stored with `kind: "dry-run"`.
+
+**The review.** The engine previews in two styles:
+- `+ `, `~ ` and `- ` lines from diff-first commands;
+- `[dry-run] <verb> …` lines, classified by verb, for example "would DELETE" counts as a deletion.
+
+Only lines that *start* with these markers count, in either stream. Log lines stay as context, which the UI hides until asked. The review gives counts and each classified line.
+
+**Hashes.** Every Run stores two, ready for #73 to match an apply to the reviewed dry run:
+- `input_hash`: the command, the exact argv and each uploaded file's hash.
+- `output_hash`: the classified diff lines and each output file's hash. Log timestamps don't change it.
 
 ## What a Run is refused for
 
@@ -133,5 +156,4 @@ These are later tickets:
 - Run history search (#69);
 - the SQL Server CI job and migrations (#70);
 - the Windows host packaging (#71);
-- dry runs (#72);
-- Apply and everything after it.
+- Apply and everything after it (Phase 2 onwards).

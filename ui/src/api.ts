@@ -73,6 +73,17 @@ export interface Run {
   stderr: string;
   message: string | null;
   files: RunFile[];
+  kind: "report" | "dry-run";
+  input_hash: string;
+  output_hash: string;
+  review: Review | null;
+}
+
+export type LineKind = "add" | "change" | "delete" | "info" | "context";
+
+export interface Review {
+  counts: { add: number; change: number; delete: number };
+  lines: { stream: "stdout" | "stderr"; kind: LineKind; text: string }[];
 }
 
 export class ApiError extends Error {

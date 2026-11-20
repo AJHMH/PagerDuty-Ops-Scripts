@@ -1,12 +1,12 @@
 :root {
   --bg: #ffffff; --fg: #1b1b1f; --muted: #5c5c66; --line: #d9d9e0; --accent: #0b5cad;
-  --ok: #1d7a3a; --bad: #b3261e;
+  --ok: #1d7a3a; --bad: #b3261e; --warn: #8a5300;
   color-scheme: light dark;
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 @media (prefers-color-scheme: dark) {
   :root { --bg: #131316; --fg: #ececf1; --muted: #a3a3ad; --line: #34343c; --accent: #7cb4ff;
-          --ok: #6fd08c; --bad: #ff8a80; }
+          --ok: #6fd08c; --bad: #ff8a80; --warn: #ffc06b; }
 }
 body { margin: 0; background: var(--bg); color: var(--fg); }
 header { display: flex; justify-content: space-between; gap: 1rem; flex-wrap: wrap;
@@ -43,3 +43,12 @@ input[type=file] { display: block; margin-top: 0.25rem; }
 small.hint { display: block; font-weight: 400; }
 table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
 th, td { text-align: left; padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1px solid var(--line); }
+.notice { border-left: 4px solid var(--accent); padding: 0.5rem 0.75rem; }
+.counts { display: flex; gap: 1.25rem; flex-wrap: wrap; font-weight: 600; }
+.counts .add, .diff .add { color: var(--ok); }
+.counts .change, .diff .change { color: var(--warn); }
+.counts .delete, .diff .delete { color: var(--bad); }
+.diff { list-style: none; padding: 0.75rem; margin: 0.5rem 0; border: 1px solid var(--line);
+        border-radius: 6px; font-family: ui-monospace, monospace; font-size: 0.9rem;
+        overflow-x: auto; white-space: pre; }
+.diff .info, .diff .context { color: var(--muted); }

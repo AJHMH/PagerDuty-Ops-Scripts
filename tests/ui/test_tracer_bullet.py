@@ -59,11 +59,12 @@ def test_exit_codes_map_to_outcomes(client):
 
 # ---------- what is refused (ADRs 0003, 0010) ----------
 
-def test_a_command_that_writes_is_refused_for_every_role(client):
-    for headers in (VIEWER, OPERATOR, APPROVER):
-        response = run(client, ["tags.csv", "--dry-run"], headers, command="pd-apply-tags")
-        assert response.status_code == 403
-        assert "writes" in response.json()["detail"]
+def test_a_viewer_cannot_run_a_command_that_writes(client):
+    # Refused before anything starts, so this real command never runs. Operators' dry runs
+    # are covered in test_dry_runs.py with test-only fixtures.
+    response = run(client, ["tags.csv", "--dry-run"], VIEWER, command="pd-apply-tags")
+    assert response.status_code == 403
+    assert "writes" in response.json()["detail"]
 
 
 def test_a_read_only_subcommand_of_a_writing_command_runs(client):

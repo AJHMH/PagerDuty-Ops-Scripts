@@ -162,3 +162,11 @@ def test_risk_rejects_inconsistent_declarations():
         Risk(writes=True)
     with pytest.raises(ValueError):
         Risk(irreversible_flags=("--prune",))
+
+
+def test_assessment_reports_how_a_dry_run_is_chosen():
+    from pagerduty_ops.risk import APPLY_FLAG, DRY_RUN_FLAG
+
+    assert assess(apply_tags, ["tags.csv"]).write_switch == DRY_RUN_FLAG
+    assert assess(business_services, ["apply", "-i", "bs.json"]).write_switch == APPLY_FLAG
+    assert assess(list_users, []).write_switch is None

@@ -18,6 +18,7 @@ from .catalog import describe, engine_catalog
 from .forms import BadValues, build_argv, form_for
 from .gate import gate
 from .identity import Admin, IdentityProvider, OktaIdentity
+from .review import input_hash, output_hash
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .runner import run_command
 from .settings import Settings
@@ -148,7 +149,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         inputs = run_files.input_records(uploads, upload_paths)  # hashed as received
         try:  # uploads first: the gate's assessment may read an uploaded Plan
             await run_in_threadpool(run_files.write_uploads, run_dir, uploads, upload_paths)
-            verdict = gate(entry, argv, run_dir, settings.secret_env.values())
+            argv, verdict = gate(entry, argv, run_dir, settings.secret_env.values(), role)
         except BaseException:
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
@@ -158,12 +159,17 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         result = await run_in_threadpool(
             run_command, entry, argv, cwd=run_dir, extra_env=settings.extra_env,
             secret_env=settings.secret_env, timeout=timeout)
+        outputs = await run_in_threadpool(run_files.collect_outputs, run_dir, inputs)
         return store.save(RunRecord(
             id=run_id, command=entry.name, argv=argv, requested_by=admin.email,
             requester_name=admin.name, requester_role=role.label, started_at=started,
             finished_at=_now(), exit_code=result.exit_code, outcome=result.outcome,
-            stdout=result.stdout, stderr=result.stderr),
-            inputs + await run_in_threadpool(run_files.collect_outputs, run_dir, inputs))
+            stdout=result.stdout, stderr=result.stderr,
+            kind="dry-run" if verdict.writes else "report",
+            input_hash=input_hash(entry.name, argv, [(f.path, f.sha256) for f in inputs]),
+            output_hash=output_hash(result.stdout, result.stderr,
+                                    [(f.path, f.sha256) for f in outputs])),
+            inputs + outputs)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, who: SignedIn):

@@ -50,7 +50,7 @@ export function App() {
         <a href="#/" className="brand">PagerDuty Ops</a>
         <span>{session.me.name} · {session.me.role} · <a href="/auth/logout">Sign out</a></span>
       </header>
-      <main>{runMatch ? <RunPage id={decodeURIComponent(runMatch[1])} /> : <RunForm />}</main>
+      <main>{runMatch ? <RunPage id={decodeURIComponent(runMatch[1])} /> : <RunForm role={session.me.role} />}</main>
     </>
   );
 }

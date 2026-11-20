@@ -131,6 +131,7 @@ class Assessment:
     reasons: tuple[str, ...]  # why it is irreversible (empty otherwise)
     cap_flags: tuple[str, ...]
     timeout_minutes: int | None
+    write_switch: str | None = None  # DRY_RUN_FLAG or APPLY_FLAG for commands that write
 
 
 def _subcommand(parser: argparse.ArgumentParser, args: argparse.Namespace) -> str | None:
@@ -199,7 +200,7 @@ def assess(module: ModuleType, argv: list[str], builder: str = "build_parser", *
     if risk.irreversible_on_sn_production:
         reasons += _sn_production_reasons(getattr(args, "instance", None))
     return Assessment(True, dry_run, bool(reasons), tuple(reasons), risk.cap_flags,
-                      risk.timeout_minutes)
+                      risk.timeout_minutes, risk.write_switch)
 
 
 def _resolve_path(path: str | None, cwd: str | None) -> str | None:

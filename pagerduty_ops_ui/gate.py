@@ -7,7 +7,10 @@ Refused with 422 (no Run is created):
 - paths outside the Run's own directory (absolute, drive-qualified, UNC or with "..").
 Options and values are judged as the command's own parser reads them, so argparse's prefixes
 (--tok), attached values (-tX, -oPATH) and short-option clusters (-qoPATH) can't slip past.
-Refused with 403: commands that write — Apply arrives in Phase 2 (ADR 0015).
+Commands that write run only as dry runs (#72): the gate adds --dry-run where that is the
+command's switch, refuses an explicit --apply, and re-checks with the engine that the final
+argv really is a dry run. Only Operators and Approvers may dry-run a command that writes
+(403); an apply is refused for everyone until Phase 2 (ADR 0015).
 """
 
 from __future__ import annotations
@@ -23,9 +26,10 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from pagerduty_ops.risk import Assessment, assess
+from pagerduty_ops.risk import DRY_RUN_FLAG, Assessment, assess
 
 from .catalog import CommandEntry
+from .roles import Role
 
 # Options whose use is refused, whatever spelling argparse accepted for them (prefixes such as
 # --tok, attached values such as -tVALUE, clusters such as -qtVALUE).
@@ -101,11 +105,22 @@ def assess_run(module, entry: CommandEntry, argv: list[str], cwd: Path) -> Asses
         return assess(module, argv, entry.builder, cwd=str(cwd))
 
 
-def gate(entry: CommandEntry, argv: list[str], cwd: Path, secrets) -> Assessment:
+def gate(entry: CommandEntry, argv: list[str], cwd: Path, secrets,
+         role: Role) -> tuple[list[str], Assessment]:
+    """The argv the Run will use and the engine's verdict on it, or an HTTP refusal."""
     module = check_arguments(entry, argv, secrets)
     verdict = assess_run(module, entry, argv, cwd)
-    if verdict.writes:
-        raise HTTPException(403, f"{entry.name} writes to PagerDuty or ServiceNow with these "
-                            "arguments; the UI runs only read-only commands until Apply "
-                            "arrives in Phase 2.")
-    return verdict
+    if not verdict.writes:
+        return argv, verdict
+    if role < Role.OPERATOR:
+        raise HTTPException(403, f"{entry.name} writes to PagerDuty or ServiceNow; only "
+                                 "Operators and Approvers can dry-run it.")
+    if not verdict.dry_run and verdict.write_switch == DRY_RUN_FLAG:
+        argv = [*argv, DRY_RUN_FLAG]
+        check_arguments(entry, argv, secrets)
+        verdict = assess_run(module, entry, argv, cwd)
+    if not verdict.dry_run:
+        raise HTTPException(403, f"These arguments would apply {entry.name}'s changes. Apply "
+                                 "arrives in Phase 2; until then commands that write run only "
+                                 "as dry runs.")
+    return argv, verdict

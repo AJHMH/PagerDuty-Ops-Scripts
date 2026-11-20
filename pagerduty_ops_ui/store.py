@@ -17,6 +17,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+from .review import review
+
 
 class Base(DeclarativeBase):
     pass
@@ -33,12 +35,17 @@ class RunRecord(Base):
     requested_by: Mapped[str] = mapped_column(Unicode(320))   # Okta email
     requester_name: Mapped[str] = mapped_column(Unicode(200))
     requester_role: Mapped[str] = mapped_column(Unicode(20))
+    kind: Mapped[str] = mapped_column(Unicode(10), default="report")  # "report" | "dry-run"
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     exit_code: Mapped[int | None] = mapped_column(Integer)
     outcome: Mapped[str] = mapped_column(Unicode(20))
     stdout: Mapped[str] = mapped_column(UnicodeText, default="")
     stderr: Mapped[str] = mapped_column(UnicodeText, default="")
+    # SHA-256 of the inputs (command, argv, uploaded files) and of the output (classified
+    # diff lines and output files): a later apply must match a reviewed dry run (#73).
+    input_hash: Mapped[str] = mapped_column(Unicode(64), default="")
+    output_hash: Mapped[str] = mapped_column(Unicode(64), default="")
 
 
 class RunFile(Base):
@@ -83,6 +90,8 @@ def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
         "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
         "exit_code": run.exit_code, "outcome": run.outcome,
         "stdout": run.stdout, "stderr": run.stderr, "message": _message(run),
+        "kind": run.kind, "input_hash": run.input_hash, "output_hash": run.output_hash,
+        "review": review(run.stdout, run.stderr) if run.kind == "dry-run" else None,
         "files": [file_dict(f) for f in files],
     }
 

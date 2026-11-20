@@ -48,6 +48,8 @@ def catalog():
                                          "build_parser")
     entries["ui-subcommands"] = CommandEntry("ui-subcommands", "fixture_subcommands", "main",
                                              "build_parser")
+    entries["ui-writer"] = CommandEntry("ui-writer", "fixture_writer", "main", "build_parser")
+    entries["ui-differ"] = CommandEntry("ui-differ", "fixture_differ", "main", "build_parser")
     return entries
 
 
