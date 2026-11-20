@@ -131,3 +131,7 @@ def pd_sn_sync() -> None:
 
 def pd_validate() -> None:
     _entry("validate")
+
+
+def pd_reorg() -> None:
+    _entry("reorg")

@@ -14,7 +14,7 @@ COMMAND_MODULES = [
     "export_ids", "export_log_entries", "list_escalation_policies", "list_incidents",
     "list_schedules", "list_services", "list_status_pages", "list_teams", "list_users",
     "list_webhooks", "patch_role",
-    "remove_team_members", "rename_resources", "scim_user_audit",
+    "remove_team_members", "rename_resources", "reorg", "scim_user_audit",
     "service_urgency", "sn_sync", "standards_report", "team_members",
     "update_team_roles", "v3_schedules", "validate",
 ]

@@ -18,6 +18,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   alignment, coverage gaps, unreachable responders, staffing, utilization, orphaned resources,
   naming, ServiceNow extension/mapping and ID drift). Severities are configurable, `--fail-on`
   sets the exit code, and `--plan-out` writes a remediation plan for `pd-reorg`.
+- `pd-reorg` (export / plan / apply): team reorganizations from a moves CSV and/or an
+  authoritative per-team YAML file. Both compile into one conflict-checked plan covering
+  membership, team and account roles, and escalation-policy and schedule ownership.
+  `--prune` is scoped to listed teams and keys. Service ownership is verified against EP
+  ownership. Optionally writes a ServiceNow follow-up plan for the affected teams.
+- Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
 
