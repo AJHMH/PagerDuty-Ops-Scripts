@@ -166,12 +166,26 @@ pd-update-team-roles --set-role responder --dry-run          # bulk preview
 pd-update-team-roles --set-role responder -y                 # bulk apply
 ```
 
-### pd-remove-team-members (interactive offboarding)
+### pd-remove-team-members (offboarding)
 ```bash
+# Interactive: prompts member by member (needs a terminal)
 pd-remove-team-members --team-id PXXXXXX --dry-run
 pd-remove-team-members --team-id PXXXXXX
+
+# Non-interactive: named users, for cron, scripts and the UI
+pd-remove-team-members --team-id PXXXXXX --user-ids PU1,PU2 \
+    --from-schedules --from-escalation-policies --dry-run
+pd-remove-team-members --team-id PXXXXXX --user-ids PU1,PU2 \
+    --from-schedules --from-escalation-policies -y
 ```
-Walks each member through removal from schedule layers and escalation-policy targets **before** team removal. Fully paginated (no 25-member truncation).
+Interactive mode walks each member through removal from schedule layers and escalation-policy targets **before** team removal. Fully paginated (no 25-member truncation).
+
+With `--user-ids`, nothing is prompted.
+- **Validated first:** the command exits 2 before any write if a user doesn't exist, or if a removal would leave a schedule layer or an escalation rule empty. In that case, add someone else to the layer or rule first.
+- **Scope:** `--from-schedules` and `--from-escalation-policies` act only on the team's own schedules and policies. Each one gets one update covering all the listed users.
+- **Order:** users are removed from the team last. If a user's schedule or policy update fails, they stay on the team and the run exits 1.
+- **Re-runs:** re-running skips whatever is already done, so it finishes the job safely.
+- **Write safety:** `--dry-run` previews every change, and `-y` is required on a non-interactive stdin.
 
 ### pd-service-urgency
 ```bash

@@ -64,7 +64,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-patch-role` | pd_patch_role.py | **yes** | Bulk user role changes |
 | `pd-rename-resources` | pd_rename_resources.py | **yes** | Idempotent prefix/suffix renames |
 | `pd-update-team-roles` | pd_update_team_roles.py | **yes** | Team role updates (interactive or `--set-role`) |
-| `pd-remove-team-members` | pd_remove_team_members.py | **yes** | Guided offboarding from schedules/EPs/team |
+| `pd-remove-team-members` | pd_remove_team_members.py | **yes** | Offboarding from schedules/EPs/team (interactive, or `--user-ids` for cron/UI) |
 | `pd-service-urgency` | update_service_notifications.py | **yes** | Set severity-based urgency on all services |
 | `pd-bulk-maintenance-window` | pd_bulk_maintenance_window.py | **yes** | Windows from CSV (idempotent) |
 | `pd-apply-tags` | pd_apply_tags.py | **yes** | Tag add/remove from CSV |
