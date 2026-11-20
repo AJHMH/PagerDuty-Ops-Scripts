@@ -4,7 +4,7 @@ A plan is JSON::
 
     {
       "format": "pagerduty-ops-plan", "version": 1,
-      "kind": "sn-sync" | "pd-reorg",
+      "kind": "sn-sync" | "pd-reorg" | "scim-sync",
       "generated_at": "...", "generated_by": "pd-sn-sync plan",
       "options": {...},
       "items": [ {"op": "...", ...}, ... ]
@@ -26,7 +26,7 @@ from datetime import datetime, timezone
 
 PLAN_FORMAT = "pagerduty-ops-plan"
 PLAN_VERSION = 1
-PLAN_KINDS = ("sn-sync", "pd-reorg")
+PLAN_KINDS = ("sn-sync", "pd-reorg", "scim-sync")
 HASH_EXCLUDED_KEYS = frozenset({"sys_id", "expected", "detail"})
 
 

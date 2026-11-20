@@ -30,7 +30,6 @@ Status: **tabled by the maintainer** (2026-11-20). Agreed design so far:
 | IP allow lists, session configurations | `/ip_allow_lists`, `/session_configurations` | Config-as-code with diff-first apply for security review. |
 | Templates (status update / notification) | `/templates` | Export/apply for consistent messaging. |
 | Slack / MS Teams / Jira integration specs | separate specs under `reference/` | Bulk channel or project mappings per service. |
-| SCIM writes | `reference/scim` (`PATCH /Users`) | Deactivate users flagged by `pd-scim-user-audit` (a write counterpart). |
 
 ## Follow-ups from this round
 

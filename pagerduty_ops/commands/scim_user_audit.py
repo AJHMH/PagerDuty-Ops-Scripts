@@ -9,6 +9,7 @@ from __future__ import annotations
 import sys
 
 from ..api import request
+from ..bulkops import load_csv_rows
 from ..cli import init, standard_parser
 from ..log import get_logger
 from ..output import write_payload
@@ -48,7 +49,9 @@ def primary_email(scim_user) -> str:
     for entry in emails:
         if entry.get("primary"):
             return (entry.get("value") or "").lower()
-    return (emails[0].get("value") or "").lower() if emails else ""
+    if emails:
+        return (emails[0].get("value") or "").lower()
+    return (scim_user.get("userName") or "").lower()
 
 
 def normalize_pd_user(u) -> dict:
@@ -60,28 +63,40 @@ def normalize_pd_user(u) -> dict:
     }
 
 
-def load_expected(path) -> dict:
-    import csv
+TRUE_VALUES = {"true", "yes", "y", "1", "active"}
+FALSE_VALUES = {"false", "no", "n", "0", "inactive"}
 
-    required = {"email", "displayName", "active"}
-    with open(path, newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f)
-        missing = required - set(reader.fieldnames or [])
-        if missing:
-            print(f"Error: CSV missing required columns: {sorted(missing)}", file=sys.stderr)
-            raise SystemExit(2)
-        out = {}
-        for row in reader:
-            email = (row.get("email") or "").strip().lower()
-            if not email:
-                continue
-            out[email] = {
-                "email": email,
-                "displayName": (row.get("displayName") or "").strip(),
-                "active": (row.get("active") or "").strip().lower()
-                in {"true", "yes", "1", "active"},
-            }
-        return out
+
+def load_expected(path) -> dict:
+    """{email: {email, displayName, active}} from the IdP CSV.
+
+    Strict: a row without an email, an unrecognized `active` value, or a duplicate
+    email is a validation error (exit 2). A typo such as "ture" must never read as
+    inactive, because pd-scim-user-sync deletes users the IdP marks inactive.
+    """
+    rows = load_csv_rows(path, {"email", "displayName", "active"},
+                         require_values=("email", "active"))
+    out, errors = {}, []
+    for row in rows:
+        email = row["email"].lower()
+        flag = row["active"].lower()
+        if flag in TRUE_VALUES:
+            active = True
+        elif flag in FALSE_VALUES:
+            active = False
+        else:
+            errors.append(f"line {row['_line']}: active={row['active']!r} is not one of "
+                          "true/false, yes/no, 1/0, active/inactive")
+            continue
+        if email in out:
+            errors.append(f"line {row['_line']}: duplicate email {email}")
+            continue
+        out[email] = {"email": email, "displayName": row["displayName"], "active": active}
+    if errors:
+        for e in errors:
+            print(f"Error: {path}: {e}", file=sys.stderr)
+        raise SystemExit(2)
+    return out
 
 
 def diff(pd_users, expected):

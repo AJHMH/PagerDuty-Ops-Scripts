@@ -53,6 +53,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `pd-incident-workflows` (export / diff / triggers-export / triggers-apply): git-friendly
   workflow exports with a read-only drift diff (`--fail-on-drift`), plus idempotent bulk
   attach and detach of workflow triggers to services from CSV.
+- `pd-scim-user-sync` (plan / apply): the write side of `pd-scim-user-audit`. It corrects
+  display-name drift and deletes users the IdP marks inactive (SCIM `active: false`
+  **deletes** the user). Deletions are blocked for the owner and for anyone still on a
+  schedule or escalation policy. `apply` re-checks live, refuses plans older than 24 hours,
+  and caps deletions (`--max-deletes`, default 10). Orphans are deleted only with
+  `--delete-orphans`.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
@@ -68,6 +74,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   `pd-service-field-values` and `pd-subscriptions`. `pd-apply-tags` also rejects unknown
   `entity_type` and `action` values instead of warning and skipping them.
   `load_csv_rows(skip_if_missing=)` is renamed to `require_values=`.
+- `pd-scim-user-audit` reads its CSV strictly. Previously, a row without an email was
+  skipped and any unrecognized `active` value (for example the typo `ture`) counted as
+  inactive. Both are now validation errors, as are duplicate emails.
 
 ## [1.0.0] - 2026-06-11
 
