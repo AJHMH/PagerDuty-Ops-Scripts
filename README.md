@@ -72,6 +72,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-alert-grouping` | pd_alert_grouping.py | **yes** | Alert grouping settings (list/attach/CRUD) |
 | `pd-validate` | pd_validate.py | no | Consistency checks across teams/users/services/EPs/schedules (+ ServiceNow); remediation plan |
 | `pd-reorg` | pd_reorg.py | **yes** | Team reorgs: export YAML, plan from moves CSV + per-team YAML (conflict-checked), apply ([guide](docs/reorg.md)) |
+| `pd-service-deps` | pd_service_deps.py | **yes** | Export / bulk associate-disassociate service dependencies from CSV (idempotent) |
 | `pd-sn-sync` | pd_sn_sync.py | **yes** (ServiceNow) | Reconcile PD IDs stored in ServiceNow groups/users; plan → rehearse → apply ([guide](docs/servicenow.md)) |
 
 Per-command usage and examples: [docs/usage.md](docs/usage.md).

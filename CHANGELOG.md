@@ -23,6 +23,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   membership, team and account roles, and escalation-policy and schedule ownership.
   `--prune` is scoped to listed teams and keys. Service ownership is verified against EP
   ownership. Optionally writes a ServiceNow follow-up plan for the affected teams.
+- `pd-service-deps` (export / apply): bulk technical and business service dependencies from
+  CSV. It is idempotent (reads existing relationships first) and batches associate and
+  disassociate calls.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

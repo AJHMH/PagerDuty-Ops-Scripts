@@ -219,6 +219,14 @@ pd-reorg apply fixes.json --dry-run        # remediation plan from pd-validate -
 ```
 Conflicting inputs are refused (exit 2). Services follow their escalation policy and are verified, not moved. Formats: [reorg.md](reorg.md).
 
+### pd-service-deps (idempotent)
+```bash
+pd-service-deps export -o deps.csv                  # re-appliable CSV of all dependencies
+pd-service-deps apply deps.csv --dry-run
+pd-service-deps apply deps.csv -y [--batch-size 100]
+```
+CSV: `action (associate|disassociate), supporting_kind, supporting_id, dependent_kind, dependent_id`. Kinds are `service` or `business_service`. Existing relationships of each dependent are read first, and no-ops are skipped. A relationship that is both associated and disassociated in the same file is rejected. PagerDuty limits a service to 2,000 dependencies.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only

@@ -135,3 +135,7 @@ def pd_validate() -> None:
 
 def pd_reorg() -> None:
     _entry("reorg")
+
+
+def pd_service_deps() -> None:
+    _entry("service_deps")
