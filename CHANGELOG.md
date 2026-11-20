@@ -26,6 +26,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `pd-service-deps` (export / apply): bulk technical and business service dependencies from
   CSV. It is idempotent (reads existing relationships first) and batches associate and
   disassociate calls.
+- `pd-schedule-overrides`: bulk create and delete overrides from CSV for v2 schedules, or
+  v3 shift-based schedules with `--v3`. Users can be looked up by exact email. It is
+  idempotent and reports per-override rejections.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

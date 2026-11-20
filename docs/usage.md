@@ -227,6 +227,22 @@ pd-service-deps apply deps.csv -y [--batch-size 100]
 ```
 CSV: `action (associate|disassociate), supporting_kind, supporting_id, dependent_kind, dependent_id`. Kinds are `service` or `business_service`. Existing relationships of each dependent are read first, and no-ops are skipped. A relationship that is both associated and disassociated in the same file is rejected. PagerDuty limits a service to 2,000 dependencies.
 
+### pd-schedule-overrides (idempotent)
+```bash
+pd-schedule-overrides holiday_coverage.csv --dry-run
+pd-schedule-overrides holiday_coverage.csv -y
+pd-schedule-overrides v3_coverage.csv --v3 -y          # shift-based (v3) schedules
+```
+CSV: `action (create|delete), schedule_id, user_id | user_email, start, end` (ISO 8601 **with timezone**).
+- **Emails** are matched exactly, ignoring case. A row whose email matches zero or several users fails validation, and nothing is written.
+- **Re-runs are safe:** identical existing overrides are skipped on create, and missing ones on delete.
+- **v3 (`--v3`)** also needs `overridden_user_id | overridden_user_email`, the person being replaced, plus an optional `rotation_id` or `custom_shift_id`.
+
+```csv
+action,schedule_id,user_id,user_email,start,end
+create,PSCHED1,,jane.doe@dallas.gov,2026-12-24T17:00:00-06:00,2026-12-26T08:00:00-06:00
+```
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only

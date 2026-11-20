@@ -139,3 +139,7 @@ def pd_reorg() -> None:
 
 def pd_service_deps() -> None:
     _entry("service_deps")
+
+
+def pd_schedule_overrides() -> None:
+    _entry("schedule_overrides")
