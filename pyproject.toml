@@ -68,6 +68,7 @@ pd-incident-workflows = "pagerduty_ops.console_scripts:pd_incident_workflows"
 pd-scim-user-sync = "pagerduty_ops.console_scripts:pd_scim_user_sync"
 pd-business-services = "pagerduty_ops.console_scripts:pd_business_services"
 pd-security-config = "pagerduty_ops.console_scripts:pd_security_config"
+pd-templates = "pagerduty_ops.console_scripts:pd_templates"
 
 [tool.setuptools]
 packages = ["pagerduty_ops", "pagerduty_ops.commands"]

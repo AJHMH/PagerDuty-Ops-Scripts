@@ -66,6 +66,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   configurations as code. Allow lists are exported and diffed but never written, because of
   the lockout risk. Session configurations are validated and written only when changed,
   with a warning that existing sessions are revoked. `diff --fail-on-drift` supports cron.
+- `pd-templates` (export / apply): status-update templates as name-keyed JSON with a
+  diff-first apply, so wording changes are reviewed in git. Deletions need `--prune` and
+  are capped.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
