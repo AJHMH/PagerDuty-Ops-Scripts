@@ -1,0 +1,48 @@
+# PagerDuty Ops
+
+Bulk administration of the City's PagerDuty account and the PagerDuty IDs mirrored in
+ServiceNow, run by the PagerDuty/ServiceNow admin team.
+
+## Language
+
+### Changing the account
+
+**Plan**:
+A reviewable file listing the exact changes a command intends to make; applying it is a separate step.
+_Avoid_: Change set, job file
+
+**Dry run**:
+Performing every step of an apply except the writes, so the result can be reviewed first.
+_Avoid_: Preview, simulation
+
+**Diff-first apply**:
+Applying a desired-state file by first showing how it differs from live, and writing only on explicit confirmation.
+_Avoid_: Sync, push
+
+**Prune**:
+Deleting live objects that are absent from a desired-state file; never done without being asked for explicitly.
+_Avoid_: Clean up, purge
+
+**Drift**:
+Any difference between a reviewed desired-state file and what is live.
+_Avoid_: Mismatch, discrepancy
+
+### ServiceNow
+
+**Rehearsal instance**:
+The non-production ServiceNow instance where a plan must succeed before it may be applied to production.
+_Avoid_: Test instance, sandbox
+
+**Rehearsal receipt**:
+Proof that a specific plan succeeded on a rehearsal instance recently; production refuses a plan without one.
+_Avoid_: Approval, sign-off
+
+**Anchor service**:
+The PagerDuty service a ServiceNow group points at, from which that group's other PagerDuty IDs are derived.
+_Avoid_: Primary service
+
+### People
+
+**Admin**:
+A member of the PagerDuty/ServiceNow admin team who operates these tools.
+_Avoid_: Operator, user (ambiguous with PagerDuty users)
