@@ -113,3 +113,16 @@ def test_unreadable_state_refuses_changes():
                       json={"error": {"message": "nope"}})
     assert erm.main(["convert", "--all", "-y"]) == 2
     assert writes() == []
+
+
+@pytest.mark.parametrize("value", ["", " ", ",", " , "])
+@pytest.mark.parametrize("command", ["convert", "activate", "deactivate"])
+@responses.activate
+def test_empty_service_ids_never_widen_to_all(command, value):
+    mock_account()
+    responses.post(f"{PD_API_BASE}/services/PS1/rules/convert", json={})
+    for sid in ACCOUNT:
+        responses.put(f"{PD_API_BASE}/event_orchestrations/services/{sid}/active", json={})
+    assert erm.main([command, "--service-ids", value, "-y"]) == 2
+    assert writes() == []
+    assert not [c for c in responses.calls if "/rules" in c.request.url]  # no state loaded

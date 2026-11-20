@@ -138,7 +138,7 @@ def inventory_main(args) -> int:
 
 def _select(args, states):
     """(targets, refusals) for the subcommand; refusals are human-readable reasons."""
-    explicit = bool(args.service_ids)
+    explicit = not args.all
     targets, refusals = [], []
     for s in states:
         label = f"{s['service_name'] or s['service_id']} ({s['service_id']})"
@@ -172,8 +172,15 @@ def change_main(args) -> int:
     if args.max_services < 1:
         print("Error: --max-services must be >= 1.", file=sys.stderr)
         return EXIT_USAGE
-    ids = [v.strip() for v in args.service_ids.split(",") if v.strip()] if args.service_ids \
-        else None
+    ids = None
+    if not args.all:
+        # An empty/blank --service-ids (e.g. an unset shell variable) must never widen the
+        # selection to every service: unfiltered selection requires an explicit --all.
+        ids = [v.strip() for v in (args.service_ids or "").split(",") if v.strip()]
+        if not ids:
+            print("Error: --service-ids is empty; pass at least one service ID, or --all.",
+                  file=sys.stderr)
+            return EXIT_USAGE
     states, failed = load_states(token, ids)
     if failed:
         print(f"Error: {failed} services could not be read; refusing to change anything.",
