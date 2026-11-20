@@ -3,10 +3,10 @@
 A thin web layer over the CLI engine for the PagerDuty/ServiceNow admin team. The design is
 recorded in [CONTEXT.md](../CONTEXT.md) and ADRs 0001–0015; the spec is issue #62.
 
-**Status: Phase 1 tracer bullet (#66).**
+**Status: Phase 1 (#66, #67).**
 - An admin signs in with Okta.
-- They pick a **read-only** command, give its arguments, and run it.
-- They see the stored Run.
+- They pick a command with a **read-only** mode and fill in its generated form, uploading any input files.
+- They run it and see the stored Run, with its output files ready to download.
 
 Commands that write are refused until Apply arrives in Phase 2.
 
@@ -14,7 +14,9 @@ Commands that write are refused until Apply arrives in Phase 2.
 
 | Part | Where | Notes |
 |---|---|---|
-| HTTP API | `pagerduty_ops_ui/app.py` | FastAPI. `GET /api/me`, `GET /api/commands`, `POST /api/runs`, `GET /api/runs/{id}` |
+| HTTP API | `pagerduty_ops_ui/app.py` | FastAPI. `GET /api/me`, `GET /api/commands`, `GET /api/commands/{name}/form`, `POST /api/runs`, `GET /api/runs/{id}`, `GET /api/runs/{id}/files/{file_id}` |
+| Generated forms | `forms.py` | One field per argument, built from the command's own parser |
+| Run files | `files.py` | Uploads and outputs stored in the Run's directory, each with a SHA-256 hash |
 | Sign-in and roles | `identity.py`, `roles.py` | Okta OIDC with PKCE. Roles come from the `PD-Ops-Viewer`, `PD-Ops-Operator` and `PD-Ops-Approver` groups (ADR 0008) |
 | What may run | `gate.py` | Uses only the engine's risk declarations and `assess()` (ADR 0010) |
 | Running a command | `runner.py` | Each Run is the command's own entry point in its own process, through `cli.run()` (ADR 0004) |
@@ -23,6 +25,35 @@ Commands that write are refused until Apply arrives in Phase 2.
 | Front end | `ui/` | React and TypeScript (Vite), built to `ui/dist` and served by the service |
 
 The service never imports or calls command logic. It holds no risk table of its own.
+
+## Generated forms
+
+`GET /api/commands/{name}/form` describes every argument the UI offers:
+- its kind: flag, count, choice, number, text, input file, input folder, output file or output folder;
+- its flags, and whether it's required;
+- its choices, default and help;
+- whether it repeats;
+- its mutually exclusive group.
+
+A command with subcommands gets one section per subcommand, marked with whether it writes.
+
+Some arguments are never offered:
+- credentials and prompts: `-t`/`--token`, `--prompt`;
+- `-y`, `--dry-run` and `--apply`, which the UI's own gates will set (ADRs 0003, 0011);
+- `--log-file` and `--receipts-dir`, which the service manages itself.
+
+argparse can't say which arguments are files, so `FILE_ROLES` in `forms.py` names them. Tests fail in two cases:
+- a command has an argument shape the generator can't render;
+- an argument whose name looks like a path isn't classified. A reviewed `NOT_FILES` list covers names that only look like paths.
+
+## Running a command
+
+`POST /api/runs` takes `{command, subcommand, values}`, either as JSON or as multipart with a `run` JSON part and `file.<field>` upload parts. Raw `{command, argv}` is still accepted.
+- **The command line:** the service builds it from the form, in the parser's order, with long flag names. Values for fields the form doesn't offer are refused.
+- **Uploads:** each upload is reduced to a plain file name and saved as `inputs/<field>/<name>` in the Run's directory, at most 25 MB each.
+- **Outputs:** anything else the command writes to its directory is an output.
+- **Hashes and downloads:** every file is recorded with its size and SHA-256. A download is refused (409) if the file has changed since the Run.
+- **Messages:** a Run that didn't succeed carries the command's last log line as its `message`, for example a usage error.
 
 ## What a Run is refused for
 
@@ -95,7 +126,6 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 ## Not yet
 
 These are later tickets:
-- generated forms and file uploads (#67);
 - the live log (#68);
 - Run history search (#69);
 - the SQL Server CI job and migrations (#70);
