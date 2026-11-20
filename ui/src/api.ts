@@ -79,10 +79,10 @@ export interface Run {
   review: Review | null;
 }
 
-export type LineKind = "add" | "change" | "delete" | "info" | "context";
+export type LineKind = "add" | "change" | "delete" | "other" | "info" | "context";
 
 export interface Review {
-  counts: { add: number; change: number; delete: number };
+  counts: { add: number; change: number; delete: number; other: number };
   lines: { stream: "stdout" | "stderr"; kind: LineKind; text: string }[];
 }
 

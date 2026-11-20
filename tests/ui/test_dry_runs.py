@@ -63,7 +63,7 @@ def test_a_writing_subcommand_is_dry_run_and_a_read_only_one_is_a_report(client)
 def test_the_review_classifies_the_diff_from_both_streams(client):
     created = run(client, "ui-writer", values={"note": "starting"}).json()
     review = created["review"]
-    assert review["counts"] == {"add": 1, "change": 1, "delete": 2}
+    assert review["counts"] == {"add": 1, "change": 1, "delete": 2, "other": 0}
     kinds = [(line["kind"], line["text"]) for line in review["lines"]]
     assert ("add", "+ new-service") in kinds
     assert ("change", "~ api-service: name 'a'->'b'") in kinds
@@ -95,3 +95,17 @@ def test_reports_get_hashes_too(client):
     created = run(client, "ui-fixture", values={"text": "hi"}, headers=VIEWER).json()
     assert created["kind"] == "report"
     assert len(created["input_hash"]) == len(created["output_hash"]) == 64
+
+
+def test_preview_lines_the_review_cant_classify_still_count_as_changes(client):
+    review = run(client, "ui-writer", values={"only_unrecognised": True}).json()["review"]
+    assert review["counts"] == {"add": 0, "change": 0, "delete": 0, "other": 1}
+    assert review["lines"][0]["kind"] == "other"
+
+
+def test_the_input_hash_is_the_same_whatever_the_mode_flags(client):
+    # #73 matches an apply (no --dry-run, with -y) to its reviewed dry run by input hash.
+    plain = run(client, "ui-writer", argv=["--note", "a"]).json()
+    flagged = run(client, "ui-writer", argv=["--note", "a", "--dry-run", "-y"]).json()
+    assert plain["argv"] == ["--note", "a", "--dry-run"]
+    assert plain["input_hash"] == flagged["input_hash"]

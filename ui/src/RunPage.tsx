@@ -8,7 +8,7 @@ const SIGN = { add: "+", change: "~", delete: "−" } as const;
 function ReviewPanel({ review }: { review: Review }) {
   const [showContext, setShowContext] = useState(false);
   const lines = review.lines.filter((l) => showContext || l.kind !== "context");
-  const { add, change, delete: del } = review.counts;
+  const { add, change, delete: del, other } = review.counts;
   return (
     <section aria-label="Review">
       <h2>What this would change</h2>
@@ -16,8 +16,9 @@ function ReviewPanel({ review }: { review: Review }) {
         <span className="add">{SIGN.add}{add} to add</span>
         <span className="change">{SIGN.change}{change} to change</span>
         <span className="delete">{SIGN.delete}{del} to delete</span>
+        {other > 0 && <span className="other">{other} other change{other === 1 ? "" : "s"}</span>}
       </p>
-      {add + change + del === 0 && <p>No changes: everything already matches.</p>}
+      {add + change + del + other === 0 && <p>No changes: everything already matches.</p>}
       <ol className="diff">
         {lines.map((l, i) => <li key={i} className={l.kind}>{l.text}</li>)}
       </ol>

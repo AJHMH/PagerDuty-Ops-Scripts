@@ -77,8 +77,10 @@ Only Operators and Approvers can dry-run; Viewers get 403. The Run is stored wit
 
 Only lines that *start* with these markers count, in either stream. Log lines stay as context, which the UI hides until asked. The review gives counts and each classified line.
 
+A `[dry-run]` line whose verb isn't recognised counts as an "other change", unless it is a known narration line such as "previewing …". So the review never claims "No changes" for a preview style it doesn't recognise, for example `pd-sn-sync`'s `[dry-run] <table> <key>: <values>`.
+
 **Hashes.** Every Run stores two, ready for #73 to match an apply to the reviewed dry run:
-- `input_hash`: the command, the exact argv and each uploaded file's hash.
+- `input_hash`: the command, the argv without its mode flags (`--dry-run`, `--apply`, `-y`, `--yes`), and each uploaded file's hash. A dry run and the apply of the same inputs therefore share it.
 - `output_hash`: the classified diff lines and each output file's hash. Log timestamps don't change it.
 
 ## What a Run is refused for

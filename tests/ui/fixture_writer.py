@@ -18,6 +18,8 @@ def build_parser():
     p.add_argument("-y", "--yes", action="store_true")
     p.add_argument("--note", default="", help="A context line for the log (not part of the diff).")
     p.add_argument("--extra-delete", action="store_true", help="Preview one more deletion.")
+    p.add_argument("--only-unrecognised", action="store_true",
+                   help="Preview only lines in a style the review can't classify.")
     return p
 
 
@@ -25,6 +27,9 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     if not args.dry_run:
         sys.stdout.write("APPLIED\n")  # the UI must never get here in Phase 1
+        return 0
+    if args.only_unrecognised:  # like pd-sn-sync: "[dry-run] <table> <key>: <values>"
+        sys.stderr.write("[dry-run] sys_user 'ann' (S1): {'pd_id': 'PU1'}\n")
         return 0
     if args.note:
         sys.stderr.write(f"2026-11-20 21:00:00 INFO {args.note}\n")

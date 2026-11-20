@@ -16,6 +16,12 @@ ADD = {"add", "create", "attach", "upload", "post", "activate", "insert"}
 CHANGE = {"update", "set", "put", "patch", "rename", "move", "convert", "change", "replace",
           "apply", "enable", "disable"}
 DELETE = {"delete", "remove", "detach", "deactivate", "clear", "prune", "unset"}
+# "[dry-run]" lines that only narrate. Any other unrecognised "[dry-run]" line is counted as
+# "other": a preview line is a change unless known otherwise, so the review can never claim
+# "no changes" for a style it doesn't recognise (e.g. pd-sn-sync's "<table> <key>: <values>").
+INFO = {"previewing", "no", "nothing", "line", "skip", "skipping", "would", "summary"}
+# Flags that choose the mode, not the inputs: a dry run and its apply share an input hash.
+MODE_FLAGS = frozenset({"--dry-run", "--apply", "-y", "--yes"})
 DRY_RUN = re.compile(r"^\[dry-run\]\s+(?:would\s+)?([A-Za-z]+)", re.IGNORECASE)
 
 
@@ -36,7 +42,7 @@ def classify(line: str) -> str:
             return "change"
         if verb in DELETE:
             return "delete"
-        return "info"
+        return "info" if verb in INFO else "other"
     return "context"
 
 
@@ -45,7 +51,7 @@ def review(stdout: str, stderr: str) -> dict:
              for stream, text in (("stdout", stdout), ("stderr", stderr))
              for line in text.splitlines() if line.strip()]
     counts = {k: sum(1 for line in lines if line["kind"] == k)
-              for k in ("add", "change", "delete")}
+              for k in ("add", "change", "delete", "other")}
     return {"counts": counts, "lines": lines}
 
 
@@ -55,8 +61,10 @@ def _digest(material) -> str:
 
 
 def input_hash(command: str, argv: list[str], inputs: list[tuple[str, str]]) -> str:
-    """Identifies a Run's inputs: the command, its exact argv and each uploaded file's hash."""
-    return _digest({"command": command, "argv": argv, "inputs": sorted(inputs)})
+    """Identifies a Run's inputs: the command, its argv without the mode flags (--dry-run,
+    --apply, -y), and each uploaded file's hash, so a dry run and its apply match (#73)."""
+    return _digest({"command": command, "argv": [a for a in argv if a not in MODE_FLAGS],
+                    "inputs": sorted(inputs)})
 
 
 def output_hash(stdout: str, stderr: str, outputs: list[tuple[str, str]]) -> str:

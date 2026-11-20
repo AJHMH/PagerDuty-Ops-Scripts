@@ -46,7 +46,7 @@ th, td { text-align: left; padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1p
 .notice { border-left: 4px solid var(--accent); padding: 0.5rem 0.75rem; }
 .counts { display: flex; gap: 1.25rem; flex-wrap: wrap; font-weight: 600; }
 .counts .add, .diff .add { color: var(--ok); }
-.counts .change, .diff .change { color: var(--warn); }
+.counts .change, .diff .change, .counts .other, .diff .other { color: var(--warn); }
 .counts .delete, .diff .delete { color: var(--bad); }
 .diff { list-style: none; padding: 0.75rem; margin: 0.5rem 0; border: 1px solid var(--line);
         border-radius: 6px; font-family: ui-monospace, monospace; font-size: 0.9rem;
