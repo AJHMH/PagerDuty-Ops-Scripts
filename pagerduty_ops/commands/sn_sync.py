@@ -220,6 +220,24 @@ def _strip_msg_date(msg: str) -> str:
     return msg.split("] ", 1)[1] if msg.startswith(MSG_PREFIX) and "] " in msg else msg
 
 
+def split_message(msg: str) -> tuple[str, str]:
+    """(foreign, ours): text written by anyone else (e.g. the PagerDuty app) and this
+    tool's own `[pd-sn-sync ...]` segment, which always comes last."""
+    idx = msg.find(MSG_PREFIX)
+    if idx < 0:
+        return msg.strip(), ""
+    return msg[:idx].strip(), msg[idx:].strip()
+
+
+def compose_message(foreign: str, ours: str) -> str:
+    """Foreign text is kept verbatim; only our segment is truncated to fit."""
+    if not ours:
+        return foreign
+    room = MSG_MAX_LEN - (len(foreign) + 1 if foreign else 0)
+    ours = ours[:max(room, len(MSG_PREFIX) + 14)]
+    return f"{foreign}\n{ours}" if foreign else ours
+
+
 def analyze(pd, sn_state: dict, fields: dict, *, prune: bool = False, today: str | None = None,
             team_filter: set | None = None, service_filter: set | None = None):
     """Return (report_rows, plan_items). Pure apart from cached PDState lookups."""
@@ -291,21 +309,24 @@ def analyze(pd, sn_state: dict, fields: dict, *, prune: bool = False, today: str
                 else:
                     add(k, cur, "", "ambiguous", reason)
 
-        # Error-message field: summarize unresolved issues; clear only our own messages.
+        # Error-message field: only our own `[pd-sn-sync` segment is ever added, replaced
+        # or cleared; text written by the PagerDuty app (or anyone else) is preserved.
         err_col = fields["group_error"]
         cur_msg = (g.get(err_col) or "").strip()
-        new_msg = (f"{MSG_PREFIX} {today}] " + "; ".join(issues))[:MSG_MAX_LEN] if issues else ""
-        if issues and _strip_msg_date(cur_msg) != _strip_msg_date(new_msg):
-            group_items.append(_item(GROUP_TABLE, "name", name, sys_id, err_col, new_msg,
-                                     cur_msg, "record reconciliation issues"))
-        elif not issues and cur_msg.startswith(MSG_PREFIX):
-            group_items.append(_item(GROUP_TABLE, "name", name, sys_id, err_col, "", cur_msg,
-                                     "clear resolved reconciliation message"))
+        foreign, ours = split_message(cur_msg)
+        new_ours = f"{MSG_PREFIX} {today}] " + "; ".join(issues) if issues else ""
+        if _strip_msg_date(ours) != _strip_msg_date(new_ours):
+            group_items.append(_item(
+                GROUP_TABLE, "name", name, sys_id, err_col, compose_message(foreign, new_ours),
+                cur_msg, "record reconciliation issues" if issues
+                else "clear resolved reconciliation message"))
         items.extend(group_items)
 
-        # Membership: report only.
-        team_id = current["group_team"] if current["group_team"] in pd.teams else (
-            (expected.get("group_team") or (None,))[0])
+        # Membership: report only. Compare against the team PagerDuty says the group should
+        # have (the derived one) when it is unique; fall back to a valid stored team.
+        derived_team = (expected.get("group_team") or (None,))[0]
+        team_id = derived_team or (
+            current["group_team"] if current["group_team"] in pd.teams else None)
         if team_id:
             pd_members = set(pd.team_members(team_id))
             pd_col = fields["user_pd_id"]

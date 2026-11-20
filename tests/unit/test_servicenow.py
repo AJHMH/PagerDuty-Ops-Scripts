@@ -387,3 +387,28 @@ def test_report_end_to_end_with_fail_on_drift(capsys):
     out = capsys.readouterr().out
     assert code == 1
     assert "x_pd_integration_pagerduty_escalation,PEPX,PEP1,update" in out
+
+
+def test_foreign_error_message_is_preserved_when_adding_and_clearing():
+    g = group(SYS["1"], "Ops", service="PSVC2", escalation="PEP2",
+              error="PagerDuty app: sync failed 2026-11-01")
+    _rows, items = sn_sync.analyze(fake_pd(), state([g]), F, today="2026-11-20")
+    value = next(i["value"] for i in items if i["field"] == F["group_error"])
+    assert value.startswith("PagerDuty app: sync failed 2026-11-01\n[pd-sn-sync 2026-11-20] ")
+    # Once resolved, only our segment is removed.
+    ok = group(SYS["1"], "Ops2", service="PSVC1", escalation="PEP1", team="PT1",
+               schedule="PS1", webhook="PW1", error=value)
+    _rows, items = sn_sync.analyze(fake_pd(), state([ok]), F, today="2026-11-21")
+    assert [i["value"] for i in items] == ["PagerDuty app: sync failed 2026-11-01"]
+
+
+def test_membership_compares_against_derived_team_not_wrong_stored_team():
+    pd = fake_pd()
+    pd.teams["PTWRONG"] = {"id": "PTWRONG"}
+    pd._members["PTWRONG"] = {"PU9": "manager"}
+    g = group(SYS["1"], "Platform", service="PSVC1", escalation="PEP1", team="PTWRONG",
+              schedule="PS1", webhook="PW1")
+    users = {SYS["4"]: {"sys_id": SYS["4"], "user_name": "ann", F["user_pd_id"]: "PU1"},
+             SYS["5"]: {"sys_id": SYS["5"], "user_name": "bo", F["user_pd_id"]: "PU2"}}
+    rows, _ = sn_sync.analyze(pd, state([g], {SYS["1"]: {SYS["4"], SYS["5"]}}, users), F)
+    assert not [r for r in rows if r["status"].startswith("membership_")]
