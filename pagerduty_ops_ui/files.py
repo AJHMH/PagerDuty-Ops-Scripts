@@ -58,13 +58,27 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def collect(run_dir: Path) -> list[RunFile]:
-    """Every regular file in the Run directory: inputs under inputs/, the rest outputs."""
+def input_records(uploads: list[tuple[str, str, bytes]],
+                  paths: dict[str, list[str]]) -> list[RunFile]:
+    """Inputs as uploaded: hashed from the bytes received, before the command runs."""
+    records, seen = [], {}
+    for dest, _filename, data in uploads:
+        index = seen.get(dest, 0)
+        seen[dest] = index + 1
+        records.append(RunFile(role="input", path=paths[dest][index], size=len(data),
+                               sha256=hashlib.sha256(data).hexdigest()))
+    return records
+
+
+def collect_outputs(run_dir: Path, inputs: list[RunFile]) -> list[RunFile]:
+    """Every other regular file the command left in its directory is an output."""
+    uploaded = {f.path for f in inputs}
     files = []
     for path in sorted(p for p in run_dir.rglob("*") if p.is_file() and not p.is_symlink()):
         rel = path.relative_to(run_dir).as_posix()
-        files.append(RunFile(role="input" if rel.startswith(f"{INPUTS}/") else "output",
-                             path=rel, size=path.stat().st_size, sha256=sha256_file(path)))
+        if rel not in uploaded:
+            files.append(RunFile(role="output", path=rel, size=path.stat().st_size,
+                                 sha256=sha256_file(path)))
     return files
 
 

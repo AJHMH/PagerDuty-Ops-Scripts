@@ -130,3 +130,22 @@ def test_a_usage_error_carries_the_commands_message(client):
     assert created["outcome"] == "usage-error"
     assert created["message"] == "Error: CSV missing columns"
     assert run_values(client, {"text": "ok"}).json()["message"] is None
+
+
+def test_outputs_may_not_be_written_over_the_uploaded_inputs(client, settings):
+    upload = [("file.input", ("services.csv", b"x\n", "text/csv"))]
+    for target in ("inputs/input/services.csv", "inputs", "./inputs/x.txt"):
+        assert run_values(client, {"output": target}, files=upload).status_code == 422
+    assert not settings.run_root.exists() or not any(settings.run_root.iterdir())
+
+
+def test_a_request_larger_than_the_cap_is_refused_before_parsing(client, settings):
+    settings.max_request_bytes = 200
+    big = [("file.input", ("a.csv", b"x" * 500, "text/csv"))]
+    assert run_values(client, {}, files=big).status_code == 413
+
+
+def test_the_run_part_must_be_text(client):
+    response = client.post("/api/runs", files=[("run", ("run.json", b"{}", "application/json"))],
+                           headers=VIEWER)
+    assert response.status_code == 422

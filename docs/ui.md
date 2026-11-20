@@ -50,7 +50,10 @@ argparse can't say which arguments are files, so `FILE_ROLES` in `forms.py` name
 
 `POST /api/runs` takes `{command, subcommand, values}`, either as JSON or as multipart with a `run` JSON part and `file.<field>` upload parts. Raw `{command, argv}` is still accepted.
 - **The command line:** the service builds it from the form, in the parser's order, with long flag names. Values for fields the form doesn't offer are refused.
-- **Uploads:** each upload is reduced to a plain file name and saved as `inputs/<field>/<name>` in the Run's directory, at most 25 MB each.
+- **Uploads:** each upload is reduced to a plain file name and saved as `inputs/<field>/<name>` in the Run's directory.
+  - Its hash is taken from the bytes as received, before the command runs.
+  - Each upload is capped at 25 MB, and a whole request at 100 MB. The request cap is checked before the body is parsed; configure IIS's request limit to match.
+  - An output can't be named into `inputs/`.
 - **Outputs:** anything else the command writes to its directory is an output.
 - **Hashes and downloads:** every file is recorded with its size and SHA-256. A download is refused (409) if the file has changed since the Run.
 - **Messages:** a Run that didn't succeed carries the command's last log line as its `message`, for example a usage error.
