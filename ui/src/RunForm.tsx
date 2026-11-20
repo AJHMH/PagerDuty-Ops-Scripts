@@ -1,6 +1,6 @@
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { getCommands, getForm, startRun, type Command, type CommandForm, type Field,
-  type Values } from "./api";
+  type Role, type Values } from "./api";
 import { FieldInput, type FieldValue } from "./FieldInput";
 
 // Turn what was typed into the values the service expects; empty and default choices are left
@@ -44,7 +44,10 @@ function Fields({ fields, state, set }: {
   );
 }
 
-export function RunForm() {
+// Commands that write run only as dry runs (#72), and only for Operators and Approvers; the
+// service enforces both, this only decides what to offer.
+export function RunForm({ role }: { role: Role }) {
+  const canDryRun = role !== "viewer";
   const [commands, setCommands] = useState<Command[]>([]);
   const [command, setCommand] = useState("");
   const [form, setForm] = useState<CommandForm | null>(null);
@@ -56,7 +59,7 @@ export function RunForm() {
   useEffect(() => {
     getCommands()
       .then((all) => {
-        const runnable = all.filter((c) => c.has_read_only_mode);
+        const runnable = all.filter((c) => canDryRun || c.has_read_only_mode);
         setCommands(runnable);
         if (runnable.length) setCommand(runnable[0].name);
       })
@@ -75,16 +78,17 @@ export function RunForm() {
       .then((f) => {
         if (!current) return;
         setForm(f);
-        // Phase 1 runs read-only modes only; the service refuses the rest anyway.
-        setSubcommand(f.subcommands?.find((s) => !s.writes)?.name ?? null);
+        const offered = f.subcommands?.filter((s) => canDryRun || !s.writes) ?? [];
+        setSubcommand((offered.find((s) => !s.writes) ?? offered[0])?.name ?? null);
       })
       .catch((e: Error) => { if (current) setError(e.message); });
     return () => { current = false; };
-  }, [command]);
+  }, [command, canDryRun]);
 
   const sub = useMemo(() => form?.subcommands?.find((s) => s.name === subcommand) ?? null,
     [form, subcommand]);
   const set = (dest: string, v: FieldValue) => setState((s) => ({ ...s, [dest]: v }));
+  const writes = sub ? sub.writes : Boolean(form?.writes);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -104,7 +108,7 @@ export function RunForm() {
 
   return (
     <form onSubmit={submit}>
-      <h1>Run a report</h1>
+      <h1>{canDryRun ? "Run a report or a dry run" : "Run a report"}</h1>
       <label>
         Command
         <select value={command} onChange={(e) => setCommand(e.target.value)}>
@@ -116,16 +120,24 @@ export function RunForm() {
         <label>
           Subcommand
           <select value={subcommand ?? ""} onChange={(e) => { setSubcommand(e.target.value); setState({}); }}>
-            {form.subcommands.filter((s) => !s.writes).map((s) => (
-              <option key={s.name} value={s.name}>{s.name}{s.help ? ` — ${s.help}` : ""}</option>
+            {form.subcommands.filter((s) => canDryRun || !s.writes).map((s) => (
+              <option key={s.name} value={s.name}>
+                {s.name}{s.writes ? " (dry run)" : ""}{s.help ? ` — ${s.help}` : ""}
+              </option>
             ))}
           </select>
         </label>
       )}
       {form && <Fields fields={form.fields} state={state} set={set} />}
       {sub && <Fields fields={sub.fields} state={state} set={set} />}
+      {writes && (
+        <p className="notice">This command writes. It will run as a <strong>dry run</strong>:
+          you'll see what it would change, and nothing is changed.</p>
+      )}
       {error && <p className="error" role="alert">{error}</p>}
-      <button type="submit" disabled={busy || !form}>{busy ? "Running…" : "Run"}</button>
+      <button type="submit" disabled={busy || !form}>
+        {busy ? "Running…" : writes ? "Dry run" : "Run"}
+      </button>
     </form>
   );
 }
