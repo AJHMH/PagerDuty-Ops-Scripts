@@ -14,6 +14,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   `basic`), a production guard (`SN_PROD_INSTANCES`, fails closed), and rehearsal receipts.
   A production apply requires the identical plan to have succeeded on a rehearsal instance
   within 7 days.
+- `pd-validate`: read-only consistency checks (user/team ownership, EP/service team
+  alignment, coverage gaps, unreachable responders, staffing, utilization, orphaned resources,
+  naming, ServiceNow extension/mapping and ID drift). Severities are configurable, `--fail-on`
+  sets the exit code, and `--plan-out` writes a remediation plan for `pd-reorg`.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
 
