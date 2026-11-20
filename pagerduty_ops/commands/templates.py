@@ -60,7 +60,14 @@ def normalize(t) -> dict:
 
 
 def load_live(token) -> list[dict]:
-    return [dict(normalize(t), id=t["id"]) for t in paginate("templates", token)]
+    """Full live templates. The list endpoint may return metadata only (PagerDuty's own
+    example omits `templated_fields`), so each template is fetched individually; an
+    unreadable template raises rather than being treated as empty content."""
+    out = []
+    for t in paginate("templates", token):
+        full = request(f"templates/{t['id']}", token).get("template") or t
+        out.append(dict(normalize(full), id=t["id"]))
+    return out
 
 
 def export_main(args) -> int:

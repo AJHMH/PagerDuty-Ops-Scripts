@@ -22,7 +22,10 @@ def _token(monkeypatch):
 
 
 def mock(live=None):
-    responses.get(T, json={"templates": live if live is not None else LIVE, "more": False})
+    live = live if live is not None else LIVE
+    responses.get(T, json={"templates": live, "more": False})
+    for t in live:
+        responses.get(f"{T}/{t['id']}", json={"template": t})
 
 
 def write(tmp_path, entries):
@@ -99,4 +102,19 @@ def test_prune_cap_and_apply_requires_yes(tmp_path):
     assert tpl.main(["apply", "-i", path, "--prune", "--apply", "-y",
                      "--max-deletes", "1"]) == 2
     assert tpl.main(["apply", "-i", path, "--apply"]) == 2
+    assert writes() == []
+
+
+@responses.activate
+def test_metadata_only_list_response_fetches_each_template(tmp_path):
+    # Documented list example: no templated_fields. The detail GET carries the content.
+    responses.get(T, json={"templates": [{k: v for k, v in t.items() if k != "templated_fields"}
+                                         for t in LIVE], "more": False})
+    for t in LIVE:
+        responses.get(f"{T}/{t['id']}", json={"template": t})
+    out = tmp_path / "t.json"
+    assert tpl.main(["export", "-o", str(out)]) == 0
+    doc = json.loads(out.read_text())["templates"]
+    assert doc[0]["templated_fields"]["email_body"] == "<p>We are investigating.</p>"
+    assert tpl.main(["apply", "-i", str(out), "--apply", "-y", "--prune"]) == 0
     assert writes() == []
