@@ -57,6 +57,7 @@ pd-eo-apply = "pagerduty_ops.console_scripts:pd_eo_apply"
 pd-sn-sync = "pagerduty_ops.console_scripts:pd_sn_sync"
 pd-validate = "pagerduty_ops.console_scripts:pd_validate"
 pd-reorg = "pagerduty_ops.console_scripts:pd_reorg"
+pd-service-deps = "pagerduty_ops.console_scripts:pd_service_deps"
 
 [tool.setuptools]
 packages = ["pagerduty_ops", "pagerduty_ops.commands"]
