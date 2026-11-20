@@ -60,13 +60,13 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 ### Fixed
 - Bulk CSV commands no longer silently skip incomplete rows. Previously, a row missing a
   required value (for example `detach,T1,`) was dropped, the valid rows were written, and
-  the run exited 0. Now the whole file is rejected, with every offending line listed,
-  (exit 2) before any write. This affects `pd-apply-tags`, `pd-alert-grouping`,
-  `pd-bulk-extensions`, `pd-bulk-maintenance-window`, `pd-cmdb-enrichment`,
-  `pd-schedule-overrides`, `pd-service-deps`, `pd-service-field-values` and
-  `pd-subscriptions`. Rows with more cells than the header are rejected the same way. Completely blank rows
-  are still ignored. `pd-apply-tags` now also
-  rejects unknown `entity_type` and `action` values instead of warning and skipping them.
+  the run exited 0. Now the whole file is rejected before any write (exit 2), with every
+  offending line listed. Rows with more cells than the header are rejected the same way,
+  and completely blank rows are still ignored. This affects `pd-apply-tags`,
+  `pd-alert-grouping`, `pd-bulk-extensions`, `pd-bulk-maintenance-window`,
+  `pd-cmdb-enrichment`, `pd-schedule-overrides`, `pd-service-deps`,
+  `pd-service-field-values` and `pd-subscriptions`. `pd-apply-tags` also rejects unknown
+  `entity_type` and `action` values instead of warning and skipping them.
   `load_csv_rows(skip_if_missing=)` is renamed to `require_values=`.
 
 ## [1.0.0] - 2026-06-11
