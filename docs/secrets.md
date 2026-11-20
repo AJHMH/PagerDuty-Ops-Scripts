@@ -13,6 +13,7 @@
 |---|---|
 | **Read-only** REST token | pd-list-* , pd-export-* , pd-audit-export, pd-standards-report, pd-team-members, pd-eo-export, pd-v3-schedules |
 | **Full-access** REST token | pd-patch-role, pd-rename-resources, pd-update-team-roles, pd-remove-team-members, pd-service-urgency, pd-bulk-maintenance-window, pd-apply-tags, pd-bulk-extensions, pd-alert-grouping, pd-eo-apply |
+| Account Owner / Global Admin user token or account API key | pd-security-config (IP allow lists and session configurations) |
 | Full-access + **SCIM** enabled | pd-scim-user-audit (read), pd-scim-user-sync (writes; `users.write`, and it can **delete** users) |
 
 Keep two tokens: a read-only one for scheduled exports, a full-access one used only for supervised bulk changes.
