@@ -35,6 +35,11 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   fields, incident types, and incident-type custom fields, with a diff-first apply.
   Deletions require `--prune`. Changes that can't be made in place (`data_type`,
   `field_type`, `parent_type`) exit 1.
+- `pd-cmdb-enrichment` (**Early Access**, gated by `--early-access`): idempotent apply of
+  ServiceNow CMDB tables and enrichment schemas, CSV record upload, and event-enrichment
+  associations. ServiceNow credentials are deliberately out of scope.
+- `api.request` accepts `raw_body` (for non-JSON uploads) and sends a JSON body on DELETE
+  when one is given.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

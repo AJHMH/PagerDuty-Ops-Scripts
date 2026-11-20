@@ -151,3 +151,7 @@ def pd_subscriptions() -> None:
 
 def pd_custom_fields() -> None:
     _entry("custom_fields")
+
+
+def pd_cmdb_enrichment() -> None:
+    _entry("cmdb_enrichment")

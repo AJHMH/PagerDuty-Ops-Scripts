@@ -265,6 +265,21 @@ Covers service custom fields, incident types, and incident-type custom fields, i
 - **Some changes can't be made in place:** a change to `data_type`, `field_type` or `parent_type` is reported and exits 1.
 - **Deprecated endpoints:** `/incidents/custom_fields` is not used.
 
+### pd-cmdb-enrichment (PagerDuty **Early Access** — `--early-access` required)
+```bash
+pd-cmdb-enrichment list --early-access
+pd-cmdb-enrichment tables-apply cmdb_tables.json --integration-id INTEG_ID --enable --dry-run --early-access
+pd-cmdb-enrichment table-test --integration-id INTEG_ID --table-id TABLE_ID --early-access
+pd-cmdb-enrichment schemas-apply schemas.json --dry-run --early-access
+pd-cmdb-enrichment records-upload hosts.csv --schema-id SCHEMA_ID -y --early-access
+pd-cmdb-enrichment associations assoc.csv --enrichment-id ENRICH_ID --dry-run --early-access
+```
+- `cmdb_tables.json`: `{"cmdb_tables": [{"display_name", "ci_table_name", "query_filter", "field_mappings": [{"servicenow_field", "event_field"}]}]}` (2–20 mappings). Tables are matched by `display_name`.
+- `schemas.json`: `{"schemas": [{"name", "fields": [{"name", "type": "query"|"enriched"}]}]}` (2–25 fields, at least one `query`). Schemas are matched by `name`.
+- `records-upload`: CSV of at most 10 MB. It must contain every `query` column, and rows with matching query values update existing records. Processing is asynchronous.
+- `assoc.csv`: `action (add|remove), type (service|event_orchestration), id`.
+- **ServiceNow credentials are not managed by this tool.** Set them up once in the PagerDuty UI.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only
