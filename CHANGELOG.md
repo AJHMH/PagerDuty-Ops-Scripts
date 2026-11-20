@@ -55,8 +55,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   attach and detach of workflow triggers to services from CSV.
 - `pd-scim-user-sync` (plan / apply): the write side of `pd-scim-user-audit`. It corrects
   display-name drift and deletes users the IdP marks inactive (SCIM `active: false`
-  **deletes** the user). Deletions are blocked for the owner and for anyone still on a
-  schedule or escalation policy. `apply` re-checks live, refuses plans older than 24 hours,
+  **deletes** the user). Deletions are blocked for the owner, for anyone still on a v2 or
+  v3 schedule or an escalation policy, and when v3 membership can't be checked. `apply` re-checks live, refuses plans older than 24 hours,
   and caps deletions (`--max-deletes`, default 10). Orphans are deleted only with
   `--delete-orphans`.
 - Dependency: PyYAML.

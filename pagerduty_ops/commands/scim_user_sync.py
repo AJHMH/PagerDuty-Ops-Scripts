@@ -9,8 +9,9 @@ That cannot be undone, so deletions are guarded:
 - only users the IdP CSV marks inactive are planned for deletion; users missing from the
   CSV ("orphans") are reported, and planned only with --delete-orphans
 - a deletion is BLOCKED (never applied) for the account owner, for users on any schedule
-  or escalation policy (clear rotations first, e.g. pd-remove-team-members), and when the
-  SCIM user cannot be matched by email to exactly one PagerDuty user
+  (v2 layers or shift-based v3 schedules) or escalation policy (clear rotations first, e.g.
+  pd-remove-team-members), when v3 membership cannot be verified (fail closed), and when
+  the SCIM user cannot be matched by email to exactly one PagerDuty user
 - apply re-checks the same conditions live, refuses plans older than --max-plan-age-hours
   (default 24), and caps deletions with --max-deletes (default 10)
 Users missing from PagerDuty are reported only; provisioning belongs to the IdP.
@@ -24,7 +25,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from ..api import PDApiError, request
+from ..api import PDApiError, paginate, request
 from ..cli import (
     EXIT_FAILURES,
     EXIT_OK,
@@ -87,9 +88,25 @@ def rest_user_index(pd: PDState) -> dict[str, list[str]]:
     return by_email
 
 
+def v3_schedule_references(token, rest_id: str) -> list[str]:
+    """Shift-based (v3) schedules are not in the v2 /schedules list; query them by user.
+
+    Raises PDApiError if membership cannot be verified, so callers fail closed.
+    """
+    return [f"v3 schedule {s.get('name') or s.get('id')}"
+            for s in paginate("v3/schedules", token, params={"user_id": rest_id},
+                              items_key="schedules")]
+
+
 def on_call_references(pd: PDState, rest_id: str) -> list[str]:
     refs = [f"schedule {s.get('name') or sid}" for sid, s in pd.schedules.items()
             if rest_id in ref_ids(s.get("users"))]
+    try:
+        refs += v3_schedule_references(pd.token, rest_id)
+    except PDApiError as e:
+        if e.is_auth_error:
+            raise
+        refs.append(f"v3 schedules (membership could not be verified: {e})")
     for eid, e in pd.escalation_policies.items():
         for rule in e.get("escalation_rules") or []:
             if any(t.get("id") == rest_id and t.get("type") in ("user_reference", "user")

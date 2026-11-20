@@ -47,9 +47,11 @@ def _env(monkeypatch):
     monkeypatch.setattr(scim_user_sync, "PDState", lambda token: pd_state())
 
 
-def mock_scim(users=None):
+def mock_scim(users=None, v3=True):
     responses.get(SCIM, json={"Resources": users or SCIM_USERS,
                               "totalResults": len(users or SCIM_USERS)})
+    if v3:  # no shift-based schedule membership unless a test registers its own first
+        responses.get(f"{PD_API_BASE}/v3/schedules", json={"schedules": [], "more": False})
 
 
 def test_load_expected_is_strict(tmp_path):
@@ -151,5 +153,32 @@ def test_apply_refuses_stale_plans_and_enforces_delete_cap(tmp_path):
 def test_apply_conflict_when_display_name_changed(tmp_path):
     mock_scim([scim_user("S" * 26, "ann@dallas.gov", "Someone Else")])
     path = _plan(tmp_path, [RENAME_ANN])
+    assert scim_user_sync.main(["apply", path, "-y"]) == 1
+    assert not [c for c in responses.calls if c.request.method == "PATCH"]
+
+
+V3 = f"{PD_API_BASE}/v3/schedules"
+
+
+@responses.activate
+def test_v3_schedule_membership_blocks_deletion(tmp_path):
+    mock_scim(v3=False)
+    responses.get(V3, json={"schedules": [{"id": "V3S", "name": "Shift Based"}],
+                            "more": False})                 # Bo is only on a v3 schedule
+    (tmp_path / "e.csv").write_text(CSV)
+    out = tmp_path / "plan.json"
+    assert scim_user_sync.main(["plan", str(tmp_path / "e.csv"), "--plan-out", str(out)]) == 0
+    items = {i["email"]: i for i in json.loads(out.read_text())["items"]}
+    assert items["bo@dallas.gov"]["op"] == "blocked_delete"
+    assert "v3 schedule Shift Based" in items["bo@dallas.gov"]["detail"]
+    v3_calls = [c.request.url for c in responses.calls if "/v3/schedules" in c.request.url]
+    assert any("user_id=PB" in u for u in v3_calls)
+
+
+@responses.activate
+def test_unverifiable_v3_membership_fails_closed(tmp_path):
+    mock_scim(v3=False)
+    responses.get(V3, status=500, json={"error": {"message": "boom"}})
+    path = _plan(tmp_path, [DELETE_BO])
     assert scim_user_sync.main(["apply", path, "-y"]) == 1
     assert not [c for c in responses.calls if c.request.method == "PATCH"]

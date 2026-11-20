@@ -345,7 +345,7 @@ pd-scim-user-sync apply scim_plan.json -y [--max-deletes 10]
 This is the write side of `pd-scim-user-audit`, and it uses the same IdP CSV. **In PagerDuty's SCIM API, setting `active` to false deletes the user.** The command guards that:
 - **Display names:** drift is corrected with an update.
 - **Who gets deleted:** only users the IdP marks inactive. Users missing from the CSV are reported only, unless you pass `--delete-orphans`. Use that flag only with a *complete* IdP export.
-- **Blocked deletions:** a deletion is **blocked**, and never applied, for the account owner, for anyone still on a schedule or escalation policy, or when a SCIM user doesn't match exactly one PagerDuty user by email. SCIM IDs aren't PagerDuty IDs, so users are matched by email. Clear rotations first, for example with `pd-remove-team-members`, then re-plan.
+- **Blocked deletions:** a deletion is **blocked**, and never applied, for the account owner, for anyone still on a schedule (v2 layers or shift-based v3 schedules) or escalation policy, when v3 schedule membership can't be checked (fail closed), or when a SCIM user doesn't match exactly one PagerDuty user by email. SCIM IDs aren't PagerDuty IDs, so users are matched by email. Clear rotations first, for example with `pd-remove-team-members`, then re-plan.
 - **Live re-check:** `apply` re-checks each item before writing and skips items that changed or became blocked, exiting 1.
 - **Plan age and cap:** `apply` refuses plans older than 24 hours (`--max-plan-age-hours`), and caps deletions at `--max-deletes` (default 10).
 - **Missing users:** users missing from PagerDuty are reported, not created; provisioning belongs to the IdP.
