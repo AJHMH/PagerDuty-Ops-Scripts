@@ -186,10 +186,15 @@ class Validator:
                 continue
             ep_teams = ref_ids(ep.get("teams"))
             if len(ep_teams) != 1:
-                sched_teams = {t for sid in self._ep_targets(ep, "schedule")
-                               for t in ref_ids((pd.schedules.get(sid) or {}).get("teams"))}
+                # Only plan a move when EVERY referenced schedule exists and is owned by
+                # exactly one team, and they all agree; anything unknown stays a finding.
+                sched_ids = self._ep_targets(ep, "schedule")
+                owners = [ref_ids((pd.schedules.get(sid) or {}).get("teams"))
+                          if sid in pd.schedules else [] for sid in sched_ids]
+                sched_teams = {o[0] for o in owners if len(o) == 1}
+                all_known = bool(sched_ids) and all(len(o) == 1 for o in owners)
                 fix = ""
-                if not ep_teams and len(sched_teams) == 1:
+                if not ep_teams and all_known and len(sched_teams) == 1:
                     (tid,) = sched_teams
                     self.plan({"op": "move_resource", "kind": "escalation_policy",
                                "id": ep_id, "from_team": "", "to_team": tid,
@@ -228,7 +233,12 @@ class Validator:
             if not self._schedule_user_ids(sched):
                 self.finding("error", "schedule", sid, sched.get("name"), "schedule has no users")
                 continue
-            detail = pd.schedule_detail(sid, days=days) or {}
+            detail = pd.schedule_detail(sid, days=days)
+            if detail is None:
+                self.finding("error", "schedule", sid, sched.get("name"),
+                             "on-call coverage could not be retrieved (API error); "
+                             "coverage was not checked")
+                continue
             pct = (detail.get("final_schedule") or {}).get("rendered_coverage_percentage")
             if pct is not None and float(pct) < 100:
                 self.finding("warning", "schedule", sid, sched.get("name"),

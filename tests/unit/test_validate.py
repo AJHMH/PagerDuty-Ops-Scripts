@@ -165,3 +165,22 @@ def test_main_fail_on_and_plan_out(monkeypatch, tmp_path, capsys):
     assert json.loads(capsys.readouterr().out)[0]["check"] == "user_not_on_owning_team"
     assert validate.main(["--checks", "user_not_on_owning_team", "--fail-on", "warning"]) == 1
     assert validate.main(["--checks", "unreachable_responders", "--fail-on", "never"]) == 0
+
+
+def test_coverage_retrieval_failure_is_an_error_finding():
+    pd = account()
+    pd._schedule_details = {"PS1": None}
+    findings, _ = run("ep_coverage_gaps", pd)
+    assert any(f["resource_id"] == "PS1" and f["severity"] == "error"
+               and "could not be retrieved" in f["message"] for f in findings)
+
+
+def test_ep_move_not_planned_when_a_schedule_is_unowned_or_missing():
+    pd = account()
+    pd.escalation_policies["PEP2"]["escalation_rules"][0]["targets"].append(
+        {"id": "PS2", "type": "schedule_reference"})          # PS2 has no team
+    findings, v = run("service_ep_team_mismatch", pd)
+    assert v.plan_items == [] and any(f["resource_id"] == "PSVC2" for f in findings)
+    pd.escalation_policies["PEP2"]["escalation_rules"][0]["targets"][-1]["id"] = "PSGONE"
+    _, v = run("service_ep_team_mismatch", pd)
+    assert v.plan_items == []
