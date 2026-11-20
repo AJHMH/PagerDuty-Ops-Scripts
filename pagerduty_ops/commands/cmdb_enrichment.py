@@ -6,7 +6,8 @@ time" and need PagerDuty to enable them on the account.
   list            integrations (+ CMDB tables), enrichment schemas, event enrichments
   tables-apply    create/update CMDB tables on an integration from JSON (idempotent)
   table-test      run a CMDB table test query
-  schemas-apply   create/update enrichment schemas from JSON (idempotent, by name)
+  schemas-apply   create enrichment schemas from JSON (idempotent, by name; fields
+                  of existing schemas cannot change — differences exit 1)
   records-upload  upload a CSV of enrichment records into a schema (≤ 10 MB)
   associations    add/remove event-enrichment associations from CSV (idempotent)
 
@@ -23,9 +24,10 @@ import json
 import os
 import sys
 
-from ..api import PDApiError, request
+from ..api import PDApiError, paginate, request
 from ..bulkops import load_csv_rows
 from ..cli import (
+    EXIT_FAILURES,
     EXIT_OK,
     EXIT_USAGE,
     add_format_args,
@@ -155,6 +157,19 @@ def _table_body(t):
     return {k: t[k] for k in TABLE_KEYS if k in t}
 
 
+def _mapping_key(mappings):
+    """Writable mapping properties only, in order (responses add e.g. a `type` field)."""
+    return [(m.get("servicenow_field"), m.get("event_field")) for m in mappings or []]
+
+
+def _table_differs(desired: dict, live: dict) -> bool:
+    for k in ("display_name", "ci_table_name", "query_filter"):
+        if k in desired and (desired.get(k) or None) != (live.get(k) or None):
+            return True
+    return "field_mappings" in desired and \
+        _mapping_key(desired["field_mappings"]) != _mapping_key(live.get("field_mappings"))
+
+
 def validate_tables(tables) -> list[str]:
     problems, seen = [], set()
     for n, t in enumerate(tables):
@@ -189,7 +204,7 @@ def tables_apply_main(args) -> int:
         cur = live.get(t["display_name"])
         if cur is None:
             todo.append(("create", None, t))
-        elif any(_table_body(t).get(k) != cur.get(k) for k in TABLE_KEYS if k in t):
+        elif _table_differs(t, cur):
             todo.append(("update", cur.get("id"), t))
     log.info("%d tables to create, %d to update, %d unchanged.",
              sum(1 for a, *_ in todo if a == "create"),
@@ -261,21 +276,24 @@ def schemas_apply_main(args) -> int:
         return EXIT_USAGE
     live = {sc.get("name"): sc for sc in request("enrichment/schemas", token).get("schemas")
             or []}
-    todo = []
+    todo, unsupported = [], []
     for sc in desired:
         cur = live.get(sc["name"])
         if cur is None:
             todo.append(("create", None, sc))
         elif _norm_fields(cur.get("fields")) != _norm_fields(sc["fields"]):
-            todo.append(("update", cur.get("id"), sc))
-    log.info("%d schemas to create, %d to update, %d unchanged.",
-             sum(1 for a, *_ in todo if a == "create"),
-             sum(1 for a, *_ in todo if a == "update"), len(desired) - len(todo))
-    if not todo or not confirm(f"Apply {len(todo)} schema changes?", assume_yes=args.yes,
-                               dry_run=args.dry_run):
-        return EXIT_OK
+            # The API only allows renaming; fields are fixed at creation.
+            unsupported.append(sc["name"])
+            log.error("schema %r: fields differ from the live schema, but schema fields "
+                      "cannot change after creation (create a new schema instead)", sc["name"])
+    log.info("%d schemas to create, %d unchanged, %d unsupported field changes.", len(todo),
+             len(desired) - len(todo) - len(unsupported), len(unsupported))
+    if not todo:
+        return EXIT_FAILURES if unsupported else EXIT_OK
+    if not confirm(f"Create {len(todo)} schemas?", assume_yes=args.yes, dry_run=args.dry_run):
+        return EXIT_FAILURES if unsupported else EXIT_OK
     ok = failed = 0
-    for action, sid, sc in todo:
+    for action, _sid, sc in todo:
         body = {"name": sc["name"], "fields": [{"name": f["name"], "type": f["type"]}
                                                for f in sc["fields"]]}
         if args.dry_run:
@@ -284,19 +302,16 @@ def schemas_apply_main(args) -> int:
             ok += 1
             continue
         try:
-            if action == "create":
-                request("enrichment/schemas", token, method="POST",
-                        data={**body, "integration_type": "CSV"})
-            else:
-                request(f"enrichment/schemas/{sid}", token, method="PUT", data=body)
-            log.info("%sd schema %r", action, sc["name"])
+            request("enrichment/schemas", token, method="POST",
+                    data={**body, "integration_type": "CSV"})
+            log.info("created schema %r", sc["name"])
             ok += 1
         except PDApiError as e:
             if e.is_auth_error:
                 raise
-            log.error("%s schema %r failed: %s", action, sc["name"], e)
+            log.error("create schema %r failed: %s", sc["name"], e)
             failed += 1
-    return finish_bulk(ok, failed, dry_run=args.dry_run, label="schemas")
+    return finish_bulk(ok, failed + len(unsupported), dry_run=args.dry_run, label="schemas")
 
 
 # ---------------- records ----------------
@@ -362,7 +377,8 @@ def associations_main(args) -> int:
             print(f"Error: {b}", file=sys.stderr)
         return EXIT_USAGE
     base = f"enrichment/event_enrichments/{args.enrichment_id}/associations"
-    live = {(a.get("type"), a.get("id")) for a in request(base, token).get("associations") or []}
+    live = {(a.get("type"), a.get("id"))
+            for a in paginate(base, token, items_key="associations")}
     todo = {"add": sorted(want["add"] - live), "remove": sorted(want["remove"] & live)}
     total = len(todo["add"]) + len(todo["remove"])
     log.info("%d to add, %d to remove, %d already in desired state.", len(todo["add"]),
@@ -379,9 +395,17 @@ def associations_main(args) -> int:
             ok += len(items)
             continue
         try:
-            request(base, token, method="POST" if action == "add" else "DELETE",
-                    data={"associations": [{"type": t, "id": i} for t, i in items]})
-            ok += len(items)
+            body = request(base, token, method="POST" if action == "add" else "DELETE",
+                           data={"associations": [{"type": t, "id": i} for t, i in items]})
+            # HTTP 207 = partial success: per-item statuses in body["associations"].
+            bad = [r for r in (body or {}).get("associations") or []
+                   if int(r.get("status") or 0) >= 400]
+            for r in bad:
+                a = r.get("association") or {}
+                log.error("%s %s %s failed: %s", action, a.get("type"), a.get("id"),
+                          "; ".join(r.get("errors") or []) or r.get("status"))
+            failed += len(bad)
+            ok += len(items) - len(bad)
         except PDApiError as e:
             if e.is_auth_error:
                 raise

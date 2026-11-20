@@ -275,7 +275,7 @@ pd-cmdb-enrichment records-upload hosts.csv --schema-id SCHEMA_ID -y --early-acc
 pd-cmdb-enrichment associations assoc.csv --enrichment-id ENRICH_ID --dry-run --early-access
 ```
 - `cmdb_tables.json`: `{"cmdb_tables": [{"display_name", "ci_table_name", "query_filter", "field_mappings": [{"servicenow_field", "event_field"}]}]}` (2–20 mappings). Tables are matched by `display_name`.
-- `schemas.json`: `{"schemas": [{"name", "fields": [{"name", "type": "query"|"enriched"}]}]}` (2–25 fields, at least one `query`). Schemas are matched by `name`.
+- `schemas.json`: `{"schemas": [{"name", "fields": [{"name", "type": "query"|"enriched"}]}]}` (2–25 fields, at least one `query`). Schemas are matched by `name`, and only missing ones are created. Fields can't change after creation, so a field difference on an existing schema is reported and exits 1.
 - `records-upload`: CSV of at most 10 MB. It must contain every `query` column, and rows with matching query values update existing records. Processing is asynchronous.
 - `assoc.csv`: `action (add|remove), type (service|event_orchestration), id`.
 - **ServiceNow credentials are not managed by this tool.** Set them up once in the PagerDuty UI.

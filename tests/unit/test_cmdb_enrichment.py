@@ -108,3 +108,48 @@ def test_associations_idempotent_with_delete_body(tmp_path):
         {"type": "service_reference", "id": "PS2"}]}
     assert json.loads(delete.request.body) == {"associations": [
         {"type": "event_orchestration_reference", "id": "PO1"}]}
+
+
+@responses.activate
+def test_tables_apply_ignores_response_only_mapping_fields(tmp_path):
+    f = tmp_path / "t.json"
+    f.write_text(json.dumps({"cmdb_tables": [
+        {"display_name": "Servers", "ci_table_name": "cmdb_ci_server",
+         "field_mappings": mappings()}]}))
+    live_maps = [{**m, "type": "query"} for m in mappings()]
+    responses.get(f"{SN}/I1", json={"integration": {"id": "I1", "cmdb_tables": [
+        {"id": "T1", "display_name": "Servers", "ci_table_name": "cmdb_ci_server",
+         "query_filter": None, "field_mappings": live_maps}]}})
+    assert ce.main(["tables-apply", str(f), "--integration-id", "I1", "-y", EA]) == 0
+    assert all(c.request.method == "GET" for c in responses.calls)
+
+
+@responses.activate
+def test_schema_field_change_is_unsupported_and_never_put(tmp_path):
+    f = tmp_path / "s.json"
+    f.write_text(json.dumps({"schemas": [{"name": "hosts", "fields": [
+        {"name": "host", "type": "query"}, {"name": "team", "type": "enriched"}]}]}))
+    responses.get(f"{PD_API_BASE}/enrichment/schemas", json={"schemas": [
+        {"id": "S1", "name": "hosts", "fields": [{"name": "host", "type": "query"},
+                                                {"name": "owner", "type": "enriched"}]}]})
+    assert ce.main(["schemas-apply", str(f), "--dry-run", EA]) == 1
+    assert ce.main(["schemas-apply", str(f), "-y", EA]) == 1
+    assert all(c.request.method == "GET" for c in responses.calls)
+
+
+@responses.activate
+def test_associations_paginate_and_count_207_failures(tmp_path):
+    f = tmp_path / "a.csv"
+    f.write_text("action,type,id\nadd,service,PS2\nadd,service,PS3\nremove,service,PS9\n")
+    base = f"{PD_API_BASE}/enrichment/event_enrichments/E1/associations"
+    responses.get(base, json={"associations": [{"type": "service_reference", "id": "PS1"}],
+                              "more": True})
+    responses.get(base, json={"associations": [{"type": "service_reference", "id": "PS9"}],
+                              "more": False})
+    responses.post(base, status=207, json={"associations": [
+        {"status": 201, "association": {"type": "service_reference", "id": "PS2"}},
+        {"status": 404, "errors": ["service not found"],
+         "association": {"type": "service_reference", "id": "PS3"}}]})
+    responses.delete(base, json={"status": "ok"})
+    assert ce.main(["associations", str(f), "--enrichment-id", "E1", "-y", EA]) == 1
+    assert [c.request.method for c in responses.calls].count("DELETE") == 1   # PS9 on page 2
