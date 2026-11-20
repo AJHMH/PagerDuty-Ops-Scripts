@@ -209,6 +209,16 @@ pd-alert-grouping --update-json setting.json -y
 pd-alert-grouping --delete PZC4OM1 --dry-run
 ```
 
+### pd-reorg (team reorganizations)
+```bash
+pd-reorg export -o teams.yaml [--team-ids PT1,PT2]
+pd-reorg plan --moves moves.csv --teams-yaml teams.yaml [--prune] --plan-out reorg_plan.json
+pd-reorg apply reorg_plan.json --dry-run
+pd-reorg apply reorg_plan.json -y [--sn-plan-out sn_plan.json --instance dallastx]
+pd-reorg apply fixes.json --dry-run        # remediation plan from pd-validate --plan-out
+```
+Conflicting inputs are refused (exit 2). Services follow their escalation policy and are verified, not moved. Formats: [reorg.md](reorg.md).
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only
