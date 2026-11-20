@@ -48,7 +48,7 @@ def main(argv=None) -> int:
     if args.status:
         sys.stdout.write("status=" + "|".join(args.status) + "\n")
     if args.output:
-        with open(args.output, "w", encoding="utf-8") as f:
+        with open(args.output, "w", encoding="utf-8", newline="") as f:  # as write_payload
             f.write("report\n")
     if args.log:
         sys.stderr.write(args.log + "\n")
