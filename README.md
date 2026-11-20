@@ -75,6 +75,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-service-deps` | pd_service_deps.py | **yes** | Export / bulk associate-disassociate service dependencies from CSV (idempotent) |
 | `pd-schedule-overrides` | pd_schedule_overrides.py | **yes** | Bulk create/delete schedule overrides from CSV (v2, or v3 with `--v3`; email lookup) |
 | `pd-subscriptions` | pd_subscriptions.py | **yes** | List / bulk subscribe-unsubscribe users and teams to business services or incidents (idempotent) |
+| `pd-custom-fields` | pd_custom_fields.py | **yes** | Export / diff-first apply of service custom fields, incident types, and their fields (`--prune` to delete) |
 | `pd-sn-sync` | pd_sn_sync.py | **yes** (ServiceNow) | Reconcile PD IDs stored in ServiceNow groups/users; plan → rehearse → apply ([guide](docs/servicenow.md)) |
 
 Per-command usage and examples: [docs/usage.md](docs/usage.md).

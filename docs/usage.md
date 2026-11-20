@@ -252,6 +252,19 @@ pd-subscriptions apply subs.csv -y
 ```
 CSV: `action (subscribe|unsubscribe), subscriber_kind (user|team), subscriber_id, subscribable_kind (business_service|incident), subscribable_id`. PagerDuty supports notification subscriptions only to business services and incidents. Existing subscriptions are read first, and changes are grouped into one call per subscriber.
 
+### pd-custom-fields (export → diff-first apply)
+```bash
+pd-custom-fields export -o custom_fields/            # commit the directory to git
+pd-custom-fields apply -i custom_fields/             # diff only (no writes)
+pd-custom-fields apply -i custom_fields/ --apply -y  # create/update
+pd-custom-fields apply -i custom_fields/ --apply -y --prune   # also delete fields/options not in files
+```
+Covers service custom fields, incident types, and incident-type custom fields, including fixed-value options. The files are keyed by `name`, not ID, so they work across accounts.
+- **Deletions need `--prune`,** because deleting a field deletes its data.
+- **Incident types can't be deleted** through the API. Set `enabled: false` instead.
+- **Some changes can't be made in place:** a change to `data_type`, `field_type` or `parent_type` is reported and exits 1.
+- **Deprecated endpoints:** `/incidents/custom_fields` is not used.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only
