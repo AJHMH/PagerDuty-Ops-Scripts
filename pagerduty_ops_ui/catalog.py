@@ -34,4 +34,5 @@ def describe(entry: CommandEntry) -> dict:
         "name": entry.name,
         "description": getattr(module, entry.builder)().description or "",
         "read_only": not any(r.writes for r in risks),
+        "has_read_only_mode": any(not r.writes for r in risks),
     }

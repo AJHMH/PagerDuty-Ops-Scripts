@@ -42,6 +42,8 @@ class Settings:
     okta: OktaSettings | None = None
     static_dir: Path | None = None
     run_timeout_seconds: int = 2 * 3600  # ADR 0012; a command's declaration may extend it
+    max_upload_bytes: int = 25 * 1024 * 1024
+    max_request_bytes: int = 100 * 1024 * 1024
 
     @classmethod
     def from_env(cls) -> Settings:

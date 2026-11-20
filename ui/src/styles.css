@@ -32,3 +32,14 @@ dt { color: var(--muted); }
 dd { margin: 0; }
 pre { overflow-x: auto; padding: 0.75rem; border: 1px solid var(--line); border-radius: 6px;
       white-space: pre; }
+.field { margin-top: 0.75rem; }
+.field label { margin: 0; }
+label.check { display: flex; gap: 0.5rem; align-items: baseline; font-weight: 500; }
+label.check input { width: auto; }
+input[type=text], input[type=number] { display: block; width: 100%; box-sizing: border-box;
+  margin-top: 0.25rem; font: inherit; padding: 0.5rem; background: var(--bg); color: var(--fg);
+  border: 1px solid var(--line); border-radius: 6px; }
+input[type=file] { display: block; margin-top: 0.25rem; }
+small.hint { display: block; font-weight: 400; }
+table { border-collapse: collapse; width: 100%; display: block; overflow-x: auto; }
+th, td { text-align: left; padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1px solid var(--line); }
