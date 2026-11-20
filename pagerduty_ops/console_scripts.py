@@ -147,3 +147,7 @@ def pd_schedule_overrides() -> None:
 
 def pd_subscriptions() -> None:
     _entry("subscriptions")
+
+
+def pd_custom_fields() -> None:
+    _entry("custom_fields")

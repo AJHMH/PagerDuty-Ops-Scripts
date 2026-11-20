@@ -31,6 +31,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   idempotent and reports per-override rejections.
 - `pd-subscriptions` (list / apply): bulk notification subscriptions for users and teams to
   business services and incidents. It is idempotent and groups changes per subscriber.
+- `pd-custom-fields` (export / apply): git-friendly, name-keyed JSON for service custom
+  fields, incident types, and incident-type custom fields, with a diff-first apply.
+  Deletions require `--prune`. Changes that can't be made in place (`data_type`,
+  `field_type`, `parent_type`) exit 1.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
