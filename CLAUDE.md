@@ -49,6 +49,15 @@ history scan. Run the unit suite and ruff before every commit.
   only behind an explicit `--prune`.
 - Early Access endpoints only behind an explicit `--early-access` flag, labelled in help/README.
 
+## ServiceNow writes (`pd-sn-sync`, `pagerduty_ops/servicenow.py`)
+
+- PagerDuty is the source of truth; only the `x_pd_integration_*` ID columns and the error
+  message column may be written. Group membership is never written.
+- Ambiguous derivations are reported, never written; clearing stale IDs needs `--prune`.
+- Writes go plan → rehearse on `SN_REHEARSAL_INSTANCES` → production. Production requires a
+  matching receipt (`pagerduty_ops/receipts.py`); never add a bypass flag.
+- No live ServiceNow or PagerDuty calls in unit tests. Mock both with `responses`.
+
 ## Exit codes (contract for cron/CI)
 
 `0` ok (incl. dry-run, nothing to do) · `1` operation failures · `2` usage/config ·

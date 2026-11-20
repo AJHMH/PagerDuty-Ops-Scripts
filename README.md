@@ -70,6 +70,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-apply-tags` | pd_apply_tags.py | **yes** | Tag add/remove from CSV |
 | `pd-bulk-extensions` | pd_bulk_extensions.py | **yes** | Attach extensions to services (idempotent) |
 | `pd-alert-grouping` | pd_alert_grouping.py | **yes** | Alert grouping settings (list/attach/CRUD) |
+| `pd-sn-sync` | pd_sn_sync.py | **yes** (ServiceNow) | Reconcile PD IDs stored in ServiceNow groups/users; plan → rehearse → apply ([guide](docs/servicenow.md)) |
 
 Per-command usage and examples: [docs/usage.md](docs/usage.md).
 
@@ -80,6 +81,7 @@ Per-command usage and examples: [docs/usage.md](docs/usage.md).
 | `PD_API_TOKEN` | all commands | PagerDuty REST API token. See [docs/secrets.md](docs/secrets.md) for scope guidance — read-only commands work with a read-only token. |
 | `PD_TEAM_ID` | team commands | Default team ID (`--team-id` overrides). |
 | `PD_FROM_EMAIL` | some writes | PagerDuty `From` header (maintenance windows, EO apply). |
+| `SN_INSTANCE`, `SN_PROD_INSTANCES`, `SN_REHEARSAL_INSTANCES`, `SN_AUTH_METHOD`, `OKTA_*` / `SN_*` credentials | `pd-sn-sync` | ServiceNow target, production guard, and auth. See [docs/servicenow.md](docs/servicenow.md). |
 
 A `.env` file in the working directory is honored for local development (and git-ignored). `-t/--token` on the command line is **deprecated** — it leaks into shell history.
 

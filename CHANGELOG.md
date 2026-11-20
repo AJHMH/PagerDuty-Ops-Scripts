@@ -3,6 +3,20 @@
 All notable changes to this project are documented here.
 Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- `pd-sn-sync` (report / plan / apply): reconciles PagerDuty IDs stored on ServiceNow
+  `sys_user_group` and `sys_user` records, with PagerDuty as the source of truth. Groups are
+  anchored on their service ID. Ambiguous matches are reported, never written. Stale IDs are
+  cleared only with `--prune`. Membership differences are report-only.
+- ServiceNow Table API client with pluggable auth (`okta` client credentials, `sn-oauth`,
+  `basic`), a production guard (`SN_PROD_INSTANCES`, fails closed), and rehearsal receipts.
+  A production apply requires the identical plan to have succeeded on a rehearsal instance
+  within 7 days.
+- Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
+  (`pagerduty_ops/pdstate.py`).
+
 ## [1.0.0] - 2026-06-11
 
 ### Added

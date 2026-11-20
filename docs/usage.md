@@ -174,3 +174,14 @@ pd-alert-grouping --create-json new_setting.json --dry-run
 pd-alert-grouping --update-json setting.json -y
 pd-alert-grouping --delete PZC4OM1 --dry-run
 ```
+
+### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
+```bash
+pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only
+pd-sn-sync report --instance dallastx --fail-on-drift -q            # cron: exit 1 on drift
+pd-sn-sync plan --instance dallastx --plan-out sn_plan.json [--prune] [--team-ids PT1,PT2]
+pd-sn-sync apply sn_plan.json --instance dallastx-test -y           # rehearsal → receipt
+pd-sn-sync apply sn_plan.json --instance dallastx --dry-run         # production preview
+pd-sn-sync apply sn_plan.json --instance dallastx -y                # needs receipt < 7 days
+```
+Writes only the `x_pd_integration_*` ID and error-message columns. Production writes require a rehearsal receipt for the identical plan and are capped by `--max-writes` (default 25). Full guide: [servicenow.md](servicenow.md); Okta setup: [servicenow-okta-setup.md](servicenow-okta-setup.md).
