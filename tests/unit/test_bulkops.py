@@ -135,3 +135,13 @@ def test_parse_iso8601_accepts_z_and_offset():
 def test_parse_iso8601_rejects_invalid(bad):
     with pytest.raises(SystemExit):
         parse_iso8601(bad, field="t", line=3)
+
+
+def test_load_csv_rows_rejects_surplus_cells(tmp_path, capsys):
+    path = _write_csv(tmp_path, "entity_type,entity_id,tag_label,action\n"
+                                "services,PS1,prod,add\nservices,PS1,prod,add,remove\n")
+    with pytest.raises(SystemExit) as exc:
+        load_csv_rows(path, {"entity_type", "entity_id", "tag_label", "action"},
+                      require_values=("entity_id",))
+    assert exc.value.code == 2
+    assert "line 3: 1 more cell(s) than the header" in capsys.readouterr().err

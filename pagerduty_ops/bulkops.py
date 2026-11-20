@@ -87,11 +87,12 @@ def apply_name_affix_update(
 def load_csv_rows(path: str, required_columns: set[str], *, require_values=()) -> list[dict]:
     """Load and validate a CSV. Adds '_line' for error reporting.
 
-    Exits 2 if a required column is missing from the header, or if any row that is not
-    completely blank lacks a value in a column named in `require_values`; every such
-    line is reported. Rows are never silently dropped, so a bulk run can't apply the
-    valid rows and report success while ignoring a malformed one. Completely blank rows
-    (e.g. a trailing ",,," from a spreadsheet export) are skipped.
+    Exits 2 if a required column is missing from the header, if any row has more cells
+    than the header, or if any row that is not completely blank lacks a value in a column
+    named in `require_values`; every such line is reported. Rows are never silently
+    dropped, so a bulk run can't apply the valid rows and report success while ignoring a
+    malformed one. Completely blank rows (e.g. a trailing ",,," from a spreadsheet export)
+    are skipped.
     """
     try:
         f = open(path, newline="", encoding="utf-8")
@@ -106,7 +107,13 @@ def load_csv_rows(path: str, required_columns: set[str], *, require_values=()) -
             raise SystemExit(2)
         rows, problems = [], []
         for line_no, row in enumerate(reader, start=2):
+            # csv.DictReader puts cells beyond the header under the key None: a malformed
+            # row, never something to discard silently.
+            surplus = [v for v in (row.get(None) or []) if (v or "").strip()]
             clean = {k: (v or "").strip() for k, v in row.items() if k is not None}
+            if surplus:
+                problems.append(f"line {line_no}: {len(surplus)} more cell(s) than the header")
+                continue
             if not any(clean.values()):
                 continue  # completely blank row
             empty = [c for c in require_values if not clean.get(c)]
