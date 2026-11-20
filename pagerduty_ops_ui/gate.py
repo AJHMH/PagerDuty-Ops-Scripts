@@ -26,7 +26,7 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-from pagerduty_ops.risk import DRY_RUN_FLAG, Assessment, assess
+from pagerduty_ops.risk import APPLY_FLAG, DRY_RUN_FLAG, Assessment, assess
 
 from .catalog import CommandEntry
 from .roles import Role
@@ -34,6 +34,9 @@ from .roles import Role
 # Options whose use is refused, whatever spelling argparse accepted for them (prefixes such as
 # --tok, attached values such as -tVALUE, clusters such as -qtVALUE).
 FORBIDDEN_OPTIONS = frozenset({"-t", "--token", "--prompt"})
+# Options the service manages itself: every Run's log is already captured, and a timestamped
+# log file in the Run directory would be an output whose hash never matches a fresh dry run.
+SERVICE_MANAGED_OPTIONS = frozenset({"--log-file"})
 DRIVE = re.compile(r"^[A-Za-z]:")
 
 
@@ -94,6 +97,9 @@ def check_arguments(entry: CommandEntry, argv: list[str], secrets):
         if used and FORBIDDEN_OPTIONS & set(action.option_strings):
             _refuse(f"{'/'.join(action.option_strings)} is not allowed: Runs use the "
                     "service's credentials.")
+        if used and SERVICE_MANAGED_OPTIONS & set(action.option_strings):
+            _refuse(f"{'/'.join(action.option_strings)} is not allowed: the service keeps "
+                    "every Run's log itself.")
         for value in _strings(getattr(namespace, action.dest, None)):
             if _escapes_run_dir(value):
                 _refuse(f"{value!r} points outside the Run's own directory.")
@@ -124,3 +130,29 @@ def gate(entry: CommandEntry, argv: list[str], cwd: Path, secrets,
                                  "arrives in Phase 2; until then commands that write run only "
                                  "as dry runs.")
     return argv, verdict
+
+
+def gate_apply(entry: CommandEntry, neutral_argv: list[str], cwd: Path,
+               secrets) -> tuple[list[str], list[str], Assessment]:
+    """For applying a reviewed dry run: the argv of the fresh dry run, the argv of the apply,
+    and the engine's verdict on the apply. -y is added here, after every check (ADR 0003).
+
+    Refuses (403) an Irreversible operation: those need a second admin's Approval (#77).
+    """
+    module = check_arguments(entry, neutral_argv, secrets)
+    verdict = assess_run(module, entry, neutral_argv, cwd)
+    if not verdict.writes:
+        raise HTTPException(409, f"{entry.name} with these arguments doesn't write.")
+    if verdict.write_switch == APPLY_FLAG:
+        dry_argv, apply_argv = neutral_argv, [*neutral_argv, APPLY_FLAG, "-y"]
+    else:
+        dry_argv, apply_argv = [*neutral_argv, DRY_RUN_FLAG], [*neutral_argv, "-y"]
+    check_arguments(entry, apply_argv, secrets)
+    verdict = assess_run(module, entry, apply_argv, cwd)
+    if not verdict.writes or verdict.dry_run:
+        raise HTTPException(409, "The engine doesn't recognise this as an apply.")
+    if verdict.irreversible:
+        raise HTTPException(403, "This is an Irreversible operation ("
+                                 + "; ".join(verdict.reasons) + "). It needs a second "
+                                 "admin's Approval, which arrives in Phase 3.")
+    return dry_argv, apply_argv, verdict

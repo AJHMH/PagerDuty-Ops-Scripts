@@ -14,6 +14,7 @@ from sqlalchemy import (
     UnicodeText,
     create_engine,
     select,
+    update,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
@@ -46,6 +47,12 @@ class RunRecord(Base):
     # diff lines and output files): a later apply must match a reviewed dry run (#73).
     input_hash: Mapped[str] = mapped_column(Unicode(64), default="")
     output_hash: Mapped[str] = mapped_column(Unicode(64), default="")
+    # A dry run is reviewed by the admin who ran it, and applied at most once (#73).
+    reviewed_by: Mapped[str | None] = mapped_column(Unicode(320))
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    applied_run_id: Mapped[str | None] = mapped_column(Unicode(36))
+    # An apply records the reviewed dry run it came from.
+    applied_from: Mapped[str | None] = mapped_column(Unicode(36))
 
 
 class RunFile(Base):
@@ -91,6 +98,8 @@ def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
         "exit_code": run.exit_code, "outcome": run.outcome,
         "stdout": run.stdout, "stderr": run.stderr, "message": _message(run),
         "kind": run.kind, "input_hash": run.input_hash, "output_hash": run.output_hash,
+        "reviewed_by": run.reviewed_by, "reviewed_at": _iso(run.reviewed_at),
+        "applied_run_id": run.applied_run_id, "applied_from": run.applied_from,
         "review": (review(run.stdout, run.stderr, run.outcome) if run.kind == "dry-run"
                    else None),
         "files": [file_dict(f) for f in files],
@@ -121,6 +130,29 @@ class RunStore:
             files = session.scalars(select(RunFile).where(RunFile.run_id == run_id)
                                     .order_by(RunFile.id)).all()
             return to_dict(run, list(files))
+
+    def mark_reviewed(self, run_id: str, email: str) -> None:
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(RunRecord).where(RunRecord.id == run_id)
+                            .values(reviewed_by=email,
+                                    reviewed_at=datetime.now(timezone.utc)))
+
+    def claim_apply(self, dry_run_id: str, apply_id: str) -> bool:
+        """Atomically reserve a dry run for one apply; False if it is already taken."""
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(
+                update(RunRecord)
+                .where(RunRecord.id == dry_run_id, RunRecord.applied_run_id.is_(None))
+                .values(applied_run_id=apply_id))
+            return result.rowcount == 1
+
+    def release_apply(self, dry_run_id: str, apply_id: str) -> None:
+        """Undo a claim when the apply was refused before it ran."""
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(RunRecord)
+                            .where(RunRecord.id == dry_run_id,
+                                   RunRecord.applied_run_id == apply_id)
+                            .values(applied_run_id=None))
 
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:

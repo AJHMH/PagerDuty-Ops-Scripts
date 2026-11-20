@@ -68,5 +68,6 @@ def settings(tmp_path):
 def client(settings, catalog, monkeypatch):
     monkeypatch.syspath_prepend(str(HERE))  # so assess() can import the fixture module too
     app = create_app(settings, identity=HeaderIdentity(), catalog=catalog)
-    with TestClient(app) as c:
+    # The front end sends this on every request; see test_csrf in test_apply.py.
+    with TestClient(app, headers={"X-PD-Ops-Request": "1"}) as c:
         yield c

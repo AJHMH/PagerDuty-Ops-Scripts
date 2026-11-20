@@ -17,5 +17,8 @@ def build_parser():
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.apply and not args.yes:
+        sys.stderr.write("--apply requires -y.\n")
+        return 2
     sys.stdout.write("APPLIED\n" if args.apply else "+ new-template\n")
     return 0

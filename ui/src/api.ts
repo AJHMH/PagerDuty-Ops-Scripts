@@ -73,7 +73,11 @@ export interface Run {
   stderr: string;
   message: string | null;
   files: RunFile[];
-  kind: "report" | "dry-run";
+  kind: "report" | "dry-run" | "apply";
+  reviewed_by: string | null;
+  reviewed_at: string | null;
+  applied_run_id: string | null;
+  applied_from: string | null;
   input_hash: string;
   output_hash: string;
   review: Review | null;
@@ -88,7 +92,7 @@ export interface Review {
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public detail: unknown = null) {
     super(message);
   }
 }
@@ -98,12 +102,17 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: "same-origin",
-    headers: isForm ? init?.headers : { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    // X-PD-Ops-Request marks the request as the UI's own; the service refuses state-changing
+    // requests without it, so other sites can't forge them.
+    headers: isForm
+      ? { "X-PD-Ops-Request": "1", ...(init?.headers ?? {}) }
+      : { "Content-Type": "application/json", "X-PD-Ops-Request": "1", ...(init?.headers ?? {}) },
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const detail = typeof body.detail === "string" ? body.detail : response.statusText;
-    throw new ApiError(response.status, detail);
+    const detail = typeof body.detail === "string" ? body.detail
+      : typeof body.detail?.message === "string" ? body.detail.message : response.statusText;
+    throw new ApiError(response.status, detail, body.detail ?? null);
   }
   return body as T;
 }
@@ -129,6 +138,11 @@ export function startRun(command: string, subcommand: string | null, values: Val
   for (const [dest, list] of uploads) for (const file of list) form.append(`file.${dest}`, file);
   return call<Run>("/api/runs", { method: "POST", body: form });
 }
+
+export const reviewRun = (id: string) =>
+  call<Run>(`/api/runs/${encodeURIComponent(id)}/review`, { method: "POST" });
+export const applyRun = (id: string) =>
+  call<Run>(`/api/runs/${encodeURIComponent(id)}/apply`, { method: "POST" });
 
 export const fileUrl = (runId: string, fileId: number) =>
   `/api/runs/${encodeURIComponent(runId)}/files/${fileId}`;
