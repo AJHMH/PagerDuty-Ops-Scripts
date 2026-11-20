@@ -74,6 +74,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-reorg` | pd_reorg.py | **yes** | Team reorgs: export YAML, plan from moves CSV + per-team YAML (conflict-checked), apply ([guide](docs/reorg.md)) |
 | `pd-service-deps` | pd_service_deps.py | **yes** | Export / bulk associate-disassociate service dependencies from CSV (idempotent) |
 | `pd-schedule-overrides` | pd_schedule_overrides.py | **yes** | Bulk create/delete schedule overrides from CSV (v2, or v3 with `--v3`; email lookup) |
+| `pd-subscriptions` | pd_subscriptions.py | **yes** | List / bulk subscribe-unsubscribe users and teams to business services or incidents (idempotent) |
 | `pd-sn-sync` | pd_sn_sync.py | **yes** (ServiceNow) | Reconcile PD IDs stored in ServiceNow groups/users; plan → rehearse → apply ([guide](docs/servicenow.md)) |
 
 Per-command usage and examples: [docs/usage.md](docs/usage.md).

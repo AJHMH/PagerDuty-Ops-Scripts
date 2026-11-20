@@ -29,6 +29,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `pd-schedule-overrides`: bulk create and delete overrides from CSV for v2 schedules, or
   v3 shift-based schedules with `--v3`. Users can be looked up by exact email. It is
   idempotent and reports per-override rejections.
+- `pd-subscriptions` (list / apply): bulk notification subscriptions for users and teams to
+  business services and incidents. It is idempotent and groups changes per subscriber.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
