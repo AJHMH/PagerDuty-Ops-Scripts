@@ -131,7 +131,7 @@ One branch per feature; one PR per branch into `main` (see [CONTRIBUTING.md](CON
 
 ## Operations
 
-Runbook for scheduled jobs, troubleshooting, and incident response: [docs/runbook.md](docs/runbook.md).
+Runbook for scheduled jobs, troubleshooting, and incident response: [docs/runbook.md](docs/runbook.md). Deferred work and the roadmap: [docs/backlog.md](docs/backlog.md).
 
 ## License
 

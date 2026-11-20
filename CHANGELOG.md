@@ -40,6 +40,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   associations. ServiceNow credentials are deliberately out of scope.
 - `api.request` accepts `raw_body` (for non-JSON uploads) and sends a JSON body on DELETE
   when one is given.
+- `docs/backlog.md`: the tabled incident-storm design, unexplored API-schema candidates,
+  and live-verification follow-ups.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
