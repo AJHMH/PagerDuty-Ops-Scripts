@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, ValidationError
 from starlette.middleware.sessions import SessionMiddleware
@@ -23,6 +23,13 @@ from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .runner import run_command
 from .settings import Settings
 from .store import RunFile, RunRecord, RunStore
+
+# Every state-changing API request must carry this header. A browser can't add a custom
+# header to a cross-origin request without a CORS preflight, which this API never grants, so
+# a page on another site (even another *.dallas.gov site the session cookie is sent to) can't
+# forge a Run, a review or an apply.
+UI_REQUEST_HEADER = "X-PD-Ops-Request"
+SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 
 # Roles are read from the session at sign-in; a short session means removing someone from a
 # PD-Ops group in AD/Okta takes effect within a working day.
@@ -88,6 +95,13 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             raise ValueError("Okta settings are required when no identity provider is given.")
         identity = OktaIdentity(settings.okta)
     identity.install(app)
+
+    @app.middleware("http")
+    async def require_ui_header(request: Request, call_next):
+        if (request.method not in SAFE_METHODS and request.url.path.startswith("/api/")
+                and request.headers.get(UI_REQUEST_HEADER) != "1"):
+            return JSONResponse({"detail": f"Missing {UI_REQUEST_HEADER} header."}, 403)
+        return await call_next(request)
     catalog = engine_catalog() if catalog is None else catalog
     store = RunStore(settings.database_url)
 
@@ -252,9 +266,15 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         except BaseException:
             store.release_apply(run_id, apply_id)
             raise
-        return await execute(entry, apply_argv, apply_id, apply_dir, apply_inputs, admin, role,
-                             kind="apply", timeout_minutes=verdict.timeout_minutes,
-                             applied_from=run_id)
+        try:
+            return await execute(entry, apply_argv, apply_id, apply_dir, apply_inputs, admin,
+                                 role, kind="apply", timeout_minutes=verdict.timeout_minutes,
+                                 applied_from=run_id)
+        except BaseException:
+            # No apply Run was recorded: free the dry run so it can be applied again (engine
+            # applies are idempotent, so a retry after a partial apply is safe).
+            store.release_apply(run_id, apply_id)
+            raise
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, who: SignedIn):

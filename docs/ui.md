@@ -98,6 +98,10 @@ A `[dry-run]` line whose verb isn't recognised counts as an "other change", unle
 
 The writing-run queue, timeouts on the Phase 2 scale, and cancellation are #74. Cap overrides are #75.
 
+## Cross-site requests
+
+Every state-changing `/api/` request (any method but GET, HEAD or OPTIONS) must carry `X-PD-Ops-Request: 1`, or it is refused (403). The front end always sends it. A browser can't add a custom header to a cross-origin request without a CORS preflight, which the service never grants. So a page on another site can't forge a Run, a review or an apply, even another `*.dallas.gov` site that the `SameSite=Lax` session cookie is sent to.
+
 ## What a Run is refused for
 
 These are refused before any process starts, and no Run is recorded.

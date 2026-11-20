@@ -153,3 +153,43 @@ def test_an_apply_that_fails_is_recorded_with_its_outcome_and_message(client, se
     applied = apply(client, dry["id"]).json()
     assert (applied["kind"], applied["outcome"]) == ("apply", outcome)
     assert applied["message"] == f"Error: apply failed with exit {code}"
+
+
+# ---------- requests from other sites can't change anything ----------
+
+def test_state_changing_requests_need_the_ui_header(settings, catalog):
+    from conftest import HeaderIdentity
+    from fastapi.testclient import TestClient
+
+    from pagerduty_ops_ui.app import create_app
+
+    app = create_app(settings, identity=HeaderIdentity(), catalog=catalog)
+    with TestClient(app) as bare:  # like a form posted from another *.dallas.gov site
+        response = bare.post("/api/runs", data={"run": '{"command": "ui-writer"}'},
+                             headers=OPERATOR)
+        assert response.status_code == 403
+        assert bare.post("/api/runs/x/apply", headers=OPERATOR).status_code == 403
+        assert bare.get("/api/me", headers=OPERATOR).status_code == 200  # reads are fine
+
+
+# ---------- a failure while starting the apply doesn't strand the dry run ----------
+
+def test_an_apply_that_cannot_start_leaves_the_dry_run_applicable(client, monkeypatch):
+    import pagerduty_ops_ui.app as app_module
+
+    dry = reviewed(client)
+    real = app_module.run_command
+    calls = []
+
+    def flaky(entry, argv, **kwargs):
+        calls.append(argv)
+        if "-y" in argv:  # the apply itself, after the fresh dry run
+            raise OSError("no space left on device")
+        return real(entry, argv, **kwargs)
+
+    monkeypatch.setattr(app_module, "run_command", flaky)
+    with pytest.raises(OSError):
+        apply(client, dry["id"])
+    assert client.get(f"/api/runs/{dry['id']}", headers=OPERATOR).json()["applied_run_id"] is None
+    monkeypatch.setattr(app_module, "run_command", real)
+    assert apply(client, dry["id"]).status_code == 201

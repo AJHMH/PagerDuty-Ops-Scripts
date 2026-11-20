@@ -102,7 +102,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, {
     ...init,
     credentials: "same-origin",
-    headers: isForm ? init?.headers : { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    // X-PD-Ops-Request marks the request as the UI's own; the service refuses state-changing
+    // requests without it, so other sites can't forge them.
+    headers: isForm
+      ? { "X-PD-Ops-Request": "1", ...(init?.headers ?? {}) }
+      : { "Content-Type": "application/json", "X-PD-Ops-Request": "1", ...(init?.headers ?? {}) },
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
