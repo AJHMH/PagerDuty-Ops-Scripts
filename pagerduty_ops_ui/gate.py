@@ -1,0 +1,111 @@
+"""What the UI refuses before a Run starts. Risk comes only from the engine (ADR 0010).
+
+Refused with 422 (no Run is created):
+- arguments the command's own parser rejects, and --help (not a Run);
+- secrets or prompts on the command line (-t/--token, --prompt) and any argument
+  containing a configured secret value (it would be stored with the Run);
+- paths outside the Run's own directory (absolute, drive-qualified, UNC or with "..").
+Options and values are judged as the command's own parser reads them, so argparse's prefixes
+(--tok), attached values (-tX, -oPATH) and short-option clusters (-qoPATH) can't slip past.
+Refused with 403: commands that write — Apply arrives in Phase 2 (ADR 0015).
+"""
+
+from __future__ import annotations
+
+import argparse
+import contextlib
+import importlib
+import io
+import ntpath
+import posixpath
+import re
+from pathlib import Path
+
+from fastapi import HTTPException
+
+from pagerduty_ops.risk import Assessment, assess
+
+from .catalog import CommandEntry
+
+# Options whose use is refused, whatever spelling argparse accepted for them (prefixes such as
+# --tok, attached values such as -tVALUE, clusters such as -qtVALUE).
+FORBIDDEN_OPTIONS = frozenset({"-t", "--token", "--prompt"})
+DRIVE = re.compile(r"^[A-Za-z]:")
+
+
+def _refuse(message: str):
+    raise HTTPException(422, message)
+
+
+def _escapes_run_dir(value: str) -> bool:
+    if posixpath.isabs(value) or ntpath.isabs(value) or DRIVE.match(value):
+        return True
+    return ".." in re.split(r"[\\/]", value)
+
+
+def _strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            yield from _strings(item)
+
+
+def _actions(parser: argparse.ArgumentParser, namespace: argparse.Namespace):
+    """The parser's actions plus those of the subcommand that was chosen."""
+    for action in parser._actions:
+        if isinstance(action, argparse._SubParsersAction):
+            chosen = getattr(namespace, action.dest, None)
+            if chosen in action.choices:
+                yield from _actions(action.choices[chosen], namespace)
+        else:
+            yield action
+
+
+def _parse(entry: CommandEntry, argv: list[str]):
+    """Parse argv with the command's own parser, exactly as the Run will."""
+    module = importlib.import_module(entry.module)
+    parser = getattr(module, entry.builder)()
+    stderr = io.StringIO()
+    try:
+        with contextlib.redirect_stderr(stderr), contextlib.redirect_stdout(io.StringIO()):
+            return module, parser, parser.parse_args(argv)
+    except SystemExit:
+        lines = [line for line in stderr.getvalue().splitlines() if line.strip()]
+        _refuse(lines[-1] if lines else "The command rejected these arguments.")
+    raise AssertionError("unreachable")
+
+
+def check_arguments(entry: CommandEntry, argv: list[str], secrets):
+    """Judge the arguments as the command's parser understands them, not as text: argparse
+    accepts prefixes, attached values and clustered short options."""
+    if "-h" in argv or "--help" in argv:
+        _refuse("--help is not a Run.")
+    for arg in argv:
+        if any(s and len(s) >= 4 and s in arg for s in secrets):
+            _refuse("An argument contains a secret value; secrets are never arguments.")
+    module, parser, namespace = _parse(entry, argv)
+    for action in _actions(parser, namespace):
+        used = getattr(namespace, action.dest, action.default) != action.default
+        if used and FORBIDDEN_OPTIONS & set(action.option_strings):
+            _refuse(f"{'/'.join(action.option_strings)} is not allowed: Runs use the "
+                    "service's credentials.")
+        for value in _strings(getattr(namespace, action.dest, None)):
+            if _escapes_run_dir(value):
+                _refuse(f"{value!r} points outside the Run's own directory.")
+    return module
+
+
+def assess_run(module, entry: CommandEntry, argv: list[str], cwd: Path) -> Assessment:
+    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+        return assess(module, argv, entry.builder, cwd=str(cwd))
+
+
+def gate(entry: CommandEntry, argv: list[str], cwd: Path, secrets) -> Assessment:
+    module = check_arguments(entry, argv, secrets)
+    verdict = assess_run(module, entry, argv, cwd)
+    if verdict.writes:
+        raise HTTPException(403, f"{entry.name} writes to PagerDuty or ServiceNow with these "
+                            "arguments; the UI runs only read-only commands until Apply "
+                            "arrives in Phase 2.")
+    return verdict

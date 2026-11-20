@@ -25,6 +25,16 @@ dev = [
     "responses>=0.25.0",
     "pip-audit>=2.7.0",
 ]
+# The team web UI service (pagerduty_ops_ui); see docs/ui.md. Keep in step with
+# requirements-ui.txt, which CI audits.
+ui = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "sqlalchemy>=2.0.30",
+    "authlib>=1.3.2",
+    "itsdangerous>=2.2.0",
+    "httpx>=0.27.0",
+]
 
 [project.scripts]
 pd-list-users = "pagerduty_ops.console_scripts:pd_list_users"
@@ -69,9 +79,10 @@ pd-scim-user-sync = "pagerduty_ops.console_scripts:pd_scim_user_sync"
 pd-business-services = "pagerduty_ops.console_scripts:pd_business_services"
 pd-security-config = "pagerduty_ops.console_scripts:pd_security_config"
 pd-templates = "pagerduty_ops.console_scripts:pd_templates"
+pd-ui = "pagerduty_ops_ui.serve:main"
 
 [tool.setuptools]
-packages = ["pagerduty_ops", "pagerduty_ops.commands"]
+packages = ["pagerduty_ops", "pagerduty_ops.commands", "pagerduty_ops_ui"]
 
 [tool.ruff]
 line-length = 100
@@ -96,8 +107,8 @@ ignore = [
 "update_service_notifications.py" = ["E402"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests/unit"]
+testpaths = ["tests/unit", "tests/ui"]
 addopts = "-q"
 
 [tool.coverage.run]
-source = ["pagerduty_ops"]
+source = ["pagerduty_ops", "pagerduty_ops_ui"]

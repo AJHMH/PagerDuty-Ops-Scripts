@@ -57,3 +57,29 @@ def test_pd_common_make_api_request_returns_none_on_error(token):
         assert pd_common.make_api_request("users", token) is None
 
     check()
+
+
+# ---------- console_scripts.SCRIPTS is the catalog the UI launches from (ADR 0004) ----------
+
+def test_scripts_table_matches_installed_entry_points():
+    from importlib.metadata import entry_points
+
+    from pagerduty_ops import console_scripts
+
+    installed = {ep.name: ep.value for ep in entry_points(group="console_scripts")
+                 if ep.value.startswith("pagerduty_ops.console_scripts:")}
+    assert set(console_scripts.SCRIPTS) == set(installed)
+    for target in installed.values():
+        assert callable(getattr(console_scripts, target.split(":")[1]))
+
+
+def test_every_script_target_exists_and_declares_its_risk():
+    import importlib
+
+    from pagerduty_ops.console_scripts import SCRIPTS
+    from pagerduty_ops.risk import BUILDER_FOR_ENTRY, declarations
+
+    for name, (module_name, attr) in SCRIPTS.items():
+        module = importlib.import_module(f"pagerduty_ops.commands.{module_name}")
+        assert callable(getattr(module, attr)), name
+        assert BUILDER_FOR_ENTRY[attr] in declarations(module), name

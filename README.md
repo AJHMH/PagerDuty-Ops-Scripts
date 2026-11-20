@@ -115,17 +115,21 @@ Bulk commands abort immediately on auth errors instead of failing every item.
 
 PagerDuty's hosted MCP server (`.mcp.json` wires it up using `PD_API_TOKEN`) is the right tool for ad-hoc reads from MCP-aware clients ("who's on call?", "open incidents on X"). These commands are the right tool for bulk writes, CSV-driven changes, dry-run rehearsal, scheduled exports, and areas the MCP server doesn't expose (user role writes, maintenance windows, tags, audit/SCIM/standards exports, webhooks, extensions, EO apply-from-git).
 
+## Team web UI (in progress)
+
+A web UI for the admin team is being built on top of these commands. It signs admins in with Okta, runs commands as their own processes, and keeps every Run. Phase 1 runs read-only commands only. See [docs/ui.md](docs/ui.md), and [CONTEXT.md](CONTEXT.md) and `docs/adr/` for the design.
+
 ## Development
 
 ```bash
-pip install -e ".[dev]"
+pip install -e ".[dev,ui]"
 pre-commit install                      # ruff + gitleaks on every commit
-python -m pytest tests/unit -v          # unit tests (mocked HTTP, no token needed)
+python -m pytest -v                     # unit + UI service tests (mocked HTTP, no token needed)
 ruff check .                            # lint
 PD_TEST_TOKEN=... python -m pytest tests/integration -v   # opt-in, read-only
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, the unit suite on Python 3.10/3.12 (Linux) and 3.12 (Windows), `pip-audit`, and a gitleaks history scan on every push/PR. Releases are tag-driven (`v*.*.*` → `release.yml` builds and publishes artifacts).
+CI (`.github/workflows/ci.yml`) runs lint, the unit and UI service suites on Python 3.10/3.12 (Linux) and 3.12 (Windows), the front-end typecheck/build/audit, `pip-audit`, and a gitleaks history scan on every push/PR. Releases are tag-driven (`v*.*.*` → `release.yml` builds and publishes artifacts).
 
 One branch per feature; one PR per branch into `main` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 

@@ -1,0 +1,8 @@
+# UI service dependencies (pip install -e ".[ui]"). Source of truth: pyproject.toml
+# [project.optional-dependencies] ui. CI audits this file with pip-audit.
+fastapi>=0.115.0
+uvicorn>=0.30.0
+sqlalchemy>=2.0.30
+authlib>=1.3.2
+itsdangerous>=2.2.0
+httpx>=0.27.0
