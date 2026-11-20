@@ -191,3 +191,34 @@ def test_plan_main_refuses_conflicts(tmp_path, monkeypatch):
     assert json.loads(out.read_text())["items"][0]["op"] == "add_member"
     with pytest.raises(SystemExit):
         reorg.main(["plan", "--plan-out", str(out), "--bogus"])
+
+
+def test_unchanged_owner_role_in_yaml_is_a_noop(tmp_path):
+    pd = account()
+    pd._members["PA"]["PU0"] = "manager"
+    intents, errors = reorg.Intents(), []
+    p = tmp_path / "t.yaml"
+    p.write_text(yaml.safe_dump({"teams": {"PA": {"members": {
+        "PU0": {"team_role": "manager", "account_role": "owner"}}}}}))
+    reorg.load_teams_yaml(str(p), intents, pd, errors, prune=False)
+    assert errors == [] and reorg.compile_plan(pd, intents, errors) == []
+    p.write_text(yaml.safe_dump({"teams": {"PA": {"members": {
+        "PU1": {"team_role": "manager", "account_role": "owner"}}}}}))
+    reorg.load_teams_yaml(str(p), reorg.Intents(), pd, errors, prune=False)
+    assert any("account_role must be one of" in e for e in errors)
+
+
+@responses.activate
+def test_failed_add_skips_the_matching_removal(tmp_path, monkeypatch):
+    monkeypatch.setenv("PD_API_TOKEN", "t")
+    path = _plan_file(tmp_path, [
+        {"op": "remove_member", "team_id": "PA", "user_id": "PU2"},
+        {"op": "add_member", "team_id": "PB", "user_id": "PU2", "role": "responder"},
+        {"op": "remove_member", "team_id": "PA", "user_id": "PU1"},
+    ])
+    responses.put(f"{PD_API_BASE}/teams/PB/users/PU2", status=400,
+                  json={"error": {"message": "nope"}})
+    responses.delete(f"{PD_API_BASE}/teams/PA/users/PU1", status=204)
+    assert reorg.main(["apply", path, "-y"]) == 1
+    deletes = [c.request.url for c in responses.calls if c.request.method == "DELETE"]
+    assert deletes == [f"{PD_API_BASE}/teams/PA/users/PU1"]   # PU2 kept on PA

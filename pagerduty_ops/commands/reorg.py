@@ -259,7 +259,10 @@ def load_teams_yaml(path, intents: Intents, pd: PDState, errors: list, prune: bo
                 intents.member(tid, uid, role, src)
                 if m.get("account_role"):
                     acct = str(m["account_role"]).lower()
-                    if acct not in ACCOUNT_ROLES:
+                    current_acct = (pd.users.get(uid) or {}).get("role")
+                    if acct == "owner" and current_acct == "owner":
+                        pass  # unchanged owner (e.g. from pd-reorg export): no-op
+                    elif acct not in ACCOUNT_ROLES:
                         _err(errors, f"{src}.members.{uid}: account_role must be one of "
                              f"{ACCOUNT_ROLES}")
                     else:
@@ -491,10 +494,18 @@ def apply_main(args) -> int:
                    dry_run=args.dry_run):
         return EXIT_OK
     succeeded = failed = 0
+    add_failed_users: set[str] = set()
     for item in items:
         if args.dry_run:
             print(f"[dry-run] {item['op']}: {item.get('detail', '')}", file=sys.stderr)
             succeeded += 1
+            continue
+        if item["op"] == "remove_member" and item["user_id"] in add_failed_users:
+            # A failed add for this user (e.g. the destination half of a move) must not be
+            # followed by the removal, or the user would end up on neither team.
+            log.error("skipping remove_member (%s): an earlier add/role change for this user "
+                      "failed; re-run after fixing it", item.get("detail", ""))
+            failed += 1
             continue
         try:
             apply_item(token, item)
@@ -504,6 +515,8 @@ def apply_main(args) -> int:
             if e.is_auth_error:
                 raise
             log.error("%s failed (%s): %s", item["op"], item.get("detail", ""), e)
+            if item["op"] in ("add_member", "set_team_role"):
+                add_failed_users.add(item["user_id"])
             failed += 1
     code = finish_bulk(succeeded, failed, dry_run=args.dry_run, label="changes")
     if args.sn_plan_out and not args.dry_run:
