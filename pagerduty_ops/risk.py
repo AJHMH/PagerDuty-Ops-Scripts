@@ -20,6 +20,13 @@ import os
 from dataclasses import dataclass
 from types import ModuleType
 
+# Entry function -> the parser builder whose declaration covers it.
+BUILDER_FOR_ENTRY = {
+    "main": "build_parser",
+    "export_main": "build_export_parser",
+    "apply_main": "build_apply_parser",
+}
+
 BUILDER_ATTRS = {
     "build_parser": "RISK",
     "build_export_parser": "EXPORT_RISK",

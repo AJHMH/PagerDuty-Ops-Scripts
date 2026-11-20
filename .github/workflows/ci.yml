@@ -30,8 +30,8 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
-      - run: pip install -e ".[dev]"
-      - run: python -m pytest tests/unit -v --cov=pagerduty_ops --cov-report=term-missing
+      - run: pip install -e ".[dev,ui]"
+      - run: python -m pytest tests/unit tests/ui -v --cov=pagerduty_ops --cov=pagerduty_ops_ui --cov-report=term-missing
       - name: Integration tests (only when a sandbox token is configured)
         env:
           PD_TEST_TOKEN: ${{ secrets.PD_TEST_TOKEN }}
@@ -46,8 +46,25 @@ jobs:
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
-      - run: pip install -e ".[dev]"
-      - run: python -m pytest tests/unit -v
+      - run: pip install -e ".[dev,ui]"
+      - run: python -m pytest tests/unit tests/ui -v
+
+  frontend:
+    # The UI's React/TypeScript front end (ui/): typecheck, build, and audit.
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: npm audit --audit-level=high
 
   security:
     runs-on: ubuntu-latest
@@ -61,7 +78,7 @@ jobs:
       - name: Dependency vulnerability audit
         run: |
           pip install pip-audit
-          pip-audit -r requirements.txt
+          pip-audit -r requirements.txt -r requirements-ui.txt
       - name: Secret scan (full history)
         run: |
           curl -fsSL -o gitleaks.tar.gz https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz
