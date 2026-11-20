@@ -193,3 +193,13 @@ def test_an_apply_that_cannot_start_leaves_the_dry_run_applicable(client, monkey
     assert client.get(f"/api/runs/{dry['id']}", headers=OPERATOR).json()["applied_run_id"] is None
     monkeypatch.setattr(app_module, "run_command", real)
     assert apply(client, dry["id"]).status_code == 201
+
+
+def test_a_log_file_argument_is_refused_because_the_service_captures_the_log(client):
+    # A timestamped log in the Run directory would be an output, so a fresh dry run could
+    # never match the reviewed one; the service already stores every Run's log.
+    for argv in (["--log-file", "run.log"], ["--log-file=run.log"], ["--log-f", "run.log"]):
+        response = client.post("/api/runs", json={"command": "ui-writer", "argv": argv},
+                               headers=OPERATOR)
+        assert response.status_code == 422
+        assert "log" in response.json()["detail"]

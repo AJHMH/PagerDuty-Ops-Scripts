@@ -110,6 +110,7 @@ These are refused before any process starts, and no Run is recorded.
 - Arguments the command's own parser rejects.
 - `--help`.
 - `-t`/`--token` or `--prompt`.
+- `--log-file`: the service keeps every Run's log itself. A timestamped log file would also become an output that never matches a fresh dry run.
 - Any argument containing a configured secret value.
 - Any path outside the Run's own directory: absolute, drive-qualified, UNC, or containing `..`.
 

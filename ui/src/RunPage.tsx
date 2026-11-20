@@ -135,7 +135,9 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
       )}
       {run.message && <p className="error" role="alert">{run.message}</p>}
       {run.review && <ReviewPanel review={run.review} />}
-      <ApplySteps run={run} me={me} onChange={setRun} />
+      {/* Keyed by run: each dry run needs its own acknowledgement, even when Apply moves
+          to a fresh dry run and React would otherwise reuse this component's state. */}
+      <ApplySteps key={run.id} run={run} me={me} onChange={setRun} />
       <dl>
         <dt>Requested by</dt><dd>{run.requester_name} ({run.requested_by}, {run.requester_role})</dd>
         <dt>Started</dt><dd>{new Date(run.started_at).toLocaleString()}</dd>
