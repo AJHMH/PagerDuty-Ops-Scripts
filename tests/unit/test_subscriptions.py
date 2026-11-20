@@ -67,3 +67,27 @@ def test_apply_dry_run(tmp_path):
                   json={"subscriptions": [], "more": False})
     assert subs.main(["apply", str(p), "--dry-run"]) == 0
     assert all(c.request.method == "GET" for c in responses.calls)
+
+
+@responses.activate
+def test_rejected_items_in_200_responses_count_as_failures(tmp_path):
+    p = tmp_path / "s.csv"
+    p.write_text(HDR + "subscribe,user,PU1,business_service,PB1\n"
+                 "subscribe,user,PU1,business_service,PB2\n"
+                 "unsubscribe,team,PT1,business_service,PB3\n")
+    responses.get(f"{PD_API_BASE}/users/PU1/notification_subscriptions",
+                  json={"subscriptions": [], "more": False})
+    responses.get(f"{PD_API_BASE}/teams/PT1/notification_subscriptions",
+                  json={"subscriptions": [sub("team", "PT1", "PB3")], "more": False})
+    responses.post(f"{PD_API_BASE}/users/PU1/notification_subscriptions", json={
+        "subscriptions": [{"subscribable_id": "PB1", "result": "success"},
+                          {"subscribable_id": "PB2", "result": "unauthorized"}]})
+    responses.post(f"{PD_API_BASE}/teams/PT1/notification_subscriptions/unsubscribe", json={
+        "deleted_count": 0, "unauthorized_count": 1, "non_existent_count": 0})
+    assert subs.main(["apply", str(p), "-y"]) == 1
+
+
+def test_rejected_count_treats_duplicates_and_missing_as_ok():
+    assert subs.rejected_count("subscribe", {"subscriptions": [{"result": "duplicate"}]}, 1) == 0
+    assert subs.rejected_count("unsubscribe", {"deleted_count": 0, "unauthorized_count": 0,
+                                               "non_existent_count": 1}, 1) == 0

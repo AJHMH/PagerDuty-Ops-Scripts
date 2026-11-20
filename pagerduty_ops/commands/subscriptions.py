@@ -113,6 +113,19 @@ def load_rows(path) -> list[tuple]:
     return out
 
 
+def rejected_count(action: str, body: dict, batch_size: int) -> int:
+    """Items PagerDuty refused inside an HTTP 200 batch response.
+
+    subscribe: per-item `result` (success | duplicate | unauthorized);
+    unsubscribe: `unauthorized_count` (non-existent ones are already in the desired state).
+    """
+    body = body or {}
+    if action == "subscribe":
+        results = body.get("subscriptions") or []
+        return min(batch_size, sum(1 for r in results if r.get("result") == "unauthorized"))
+    return min(batch_size, int(body.get("unauthorized_count") or 0))
+
+
 def apply_main(args) -> int:
     token = init(args)
     rows = load_rows(args.csv_file)
@@ -155,9 +168,14 @@ def apply_main(args) -> int:
                     continue
                 path = _base(kind, oid) + ("/unsubscribe" if action == "unsubscribe" else "")
                 try:
-                    request(path, token, method="POST", data={"subscribables": batch})
-                    log.info("%s %s %s: %d", action, kind, oid, len(batch))
-                    succeeded += len(batch)
+                    body = request(path, token, method="POST", data={"subscribables": batch})
+                    rejected = rejected_count(action, body, len(batch))
+                    if rejected:
+                        log.error("%s %s %s: %d of %d rejected by PagerDuty (unauthorized)",
+                                  action, kind, oid, rejected, len(batch))
+                    log.info("%s %s %s: %d", action, kind, oid, len(batch) - rejected)
+                    succeeded += len(batch) - rejected
+                    failed += rejected
                 except PDApiError as e:
                     if e.is_auth_error:
                         raise
