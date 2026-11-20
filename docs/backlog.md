@@ -26,7 +26,6 @@ Status: **tabled by the maintainer** (2026-11-20). Agreed design so far:
 | Incident Workflow definition writes | `PUT /incident_workflows/{id}` | Apply edited workflow steps from git. Deferred from `pd-incident-workflows`, which exports, diffs and manages trigger links: verify the step update format against a live account first. |
 | Automation Actions | `/automation_actions/actions`, runners, service/team associations | Bulk-associate actions with services and teams. |
 | Team escalation-policy ownership audit | `/teams/{id}/escalation_policies` | Covered by `pd-reorg`; a standalone report may still help. |
-| IP allow lists, session configurations | `/ip_allow_lists`, `/session_configurations` | Config-as-code with diff-first apply for security review. |
 | Templates (status update / notification) | `/templates` | Export/apply for consistent messaging. |
 | Slack / MS Teams / Jira integration specs | separate specs under `reference/` | Bulk channel or project mappings per service. |
 

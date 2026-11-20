@@ -62,6 +62,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - `pd-business-services` (export / apply): name-keyed JSON for business service definitions
   (description, point of contact, owning team) with a diff-first apply. Deletions need
   `--prune` and are capped by `--max-deletes`.
+- `pd-security-config` (export / diff / apply-sessions): IP allow lists and session
+  configurations as code. Allow lists are exported and diffed but never written, because of
+  the lockout risk. Session configurations are validated and written only when changed,
+  with a warning that existing sessions are revoked. `diff --fail-on-drift` supports cron.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

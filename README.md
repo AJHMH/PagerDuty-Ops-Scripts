@@ -82,6 +82,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-incident-workflows` | pd_incident_workflows.py | **yes** (trigger links) | Export workflows to git, diff against live, bulk attach/detach workflow triggers to services |
 | `pd-scim-user-sync` | pd_scim_user_sync.py | **yes** (SCIM) | Plan/apply user corrections from the IdP CSV: display names and **guarded, irreversible deletions** |
 | `pd-business-services` | pd_business_services.py | **yes** | Export / diff-first apply of business service definitions, including owning team (`--prune` to delete, capped) |
+| `pd-security-config` | pd_security_config.py | sessions only | IP allow lists + session configurations as code: export, drift diff, apply sessions (allow lists are never written) |
 | `pd-sn-sync` | pd_sn_sync.py | **yes** (ServiceNow) | Reconcile PD IDs stored in ServiceNow groups/users; plan → rehearse → apply ([guide](docs/servicenow.md)) |
 
 Per-command usage and examples: [docs/usage.md](docs/usage.md).

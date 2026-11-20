@@ -364,6 +364,18 @@ pd-business-services apply -i business_services.json --apply -y --prune [--max-d
 - **Renaming:** a rename in the file means delete and create. Rename in the UI instead to keep history and dependencies.
 - **Related commands:** dependencies are handled by `pd-service-deps` and subscribers by `pd-subscriptions`.
 
+### pd-security-config (IP allow lists and session configurations)
+```bash
+pd-security-config export -o security_config.json             # commit to git for review
+pd-security-config diff -i security_config.json --fail-on-drift   # cron: exit 1 on drift
+pd-security-config apply-sessions -i security_config.json --dry-run
+pd-security-config apply-sessions -i security_config.json -y
+```
+- **IP allow lists** are exported and diffed, but this tool **never writes them**. An enabled list restricts the whole account to its CIDRs, so a wrong entry would lock everyone out. Change them in the PagerDuty UI and let `diff` catch drift.
+- **Session configurations** (`web` and `mobile`): `apply-sessions` writes only the types that changed. Writing one **immediately revokes all existing sessions of that type**, and the command warns before confirming.
+- **Validation:** `absolute_session_ttl` must be 600–18,144,000 seconds and `idle_session_ttl` 60–15,552,000 seconds, and idle can't exceed absolute.
+- **Token:** needs an Account Owner or Global Admin user token, or an account API key.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only

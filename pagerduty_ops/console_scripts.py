@@ -175,3 +175,7 @@ def pd_scim_user_sync() -> None:
 
 def pd_business_services() -> None:
     _entry("business_services")
+
+
+def pd_security_config() -> None:
+    _entry("security_config")
