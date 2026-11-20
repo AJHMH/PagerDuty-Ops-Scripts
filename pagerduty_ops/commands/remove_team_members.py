@@ -23,6 +23,7 @@ from ..cli import EXIT_USAGE, confirm, finish_bulk, init, standard_parser
 from ..config import get_team_id
 from ..log import get_logger
 from ..output import render_rows
+from ..pdstate import v3_schedule_references
 from ..risk import writes_with_dry_run
 
 log = get_logger("remove_team_members")
@@ -45,6 +46,38 @@ def build_parser():
     p.add_argument("-y", "--yes", action="store_true",
                    help="With --user-ids: skip the confirmation prompt.")
     return p
+
+
+# Writable fields only: a PUT must carry the settings it is not changing (time zone, loops,
+# team ownership), and must not echo read-only ones (rendered entries, html_url, ...).
+SCHEDULE_FIELDS = ("type", "name", "time_zone", "description", "teams", "schedule_layers")
+LAYER_FIELDS = ("id", "name", "start", "end", "rotation_virtual_start",
+                "rotation_turn_length_seconds", "users", "restrictions")
+POLICY_FIELDS = ("type", "name", "description", "num_loops", "on_call_handoff_notifications",
+                 "teams", "escalation_rules")
+RULE_FIELDS = ("id", "escalation_delay_in_minutes", "targets")
+
+
+def _pick(obj: dict, fields) -> dict:
+    return {k: obj[k] for k in fields if k in obj}
+
+
+def schedule_body(schedule: dict) -> dict:
+    body = _pick(schedule, SCHEDULE_FIELDS)
+    body["schedule_layers"] = [_pick(layer, LAYER_FIELDS)
+                               for layer in schedule.get("schedule_layers") or []]
+    return {"schedule": body}
+
+
+def policy_body(policy: dict) -> dict:
+    body = _pick(policy, POLICY_FIELDS)
+    body["escalation_rules"] = [_pick(rule, RULE_FIELDS)
+                                for rule in policy.get("escalation_rules") or []]
+    return {"escalation_policy": body}
+
+
+def is_user_target(target: dict) -> bool:
+    return target.get("type") in ("user_reference", "user")
 
 
 def get_schedule(token, schedule_id) -> dict:
@@ -73,12 +106,7 @@ def remove_user_from_schedule(token, schedule_id, user_id, user_name, dry_run=Fa
               file=sys.stderr)
         return True
     try:
-        request(f"schedules/{schedule_id}", token, method="PUT", data={
-            "schedule": {
-                "name": schedule.get("name"),
-                "schedule_layers": schedule.get("schedule_layers", []),
-            }
-        })
+        request(f"schedules/{schedule_id}", token, method="PUT", data=schedule_body(schedule))
         log.info("Removed %s from schedule %r", user_name, schedule_name)
         return True
     except PDApiError as e:
@@ -97,7 +125,7 @@ def remove_user_from_policy(token, policy_id, user_id, user_name, *, policy=None
         targets = rule.get("targets")
         if not targets:
             continue
-        kept = [t for t in targets if not (t.get("type") == "user" and t.get("id") == user_id)]
+        kept = [t for t in targets if not (is_user_target(t) and t.get("id") == user_id)]
         if len(kept) < len(targets):
             rule["targets"] = kept
             modified = True
@@ -110,12 +138,8 @@ def remove_user_from_policy(token, policy_id, user_id, user_name, *, policy=None
               file=sys.stderr)
         return True
     try:
-        request(f"escalation_policies/{policy_id}", token, method="PUT", data={
-            "escalation_policy": {
-                "name": policy.get("name"),
-                "escalation_rules": policy.get("escalation_rules", []),
-            }
-        })
+        request(f"escalation_policies/{policy_id}", token, method="PUT",
+                data=policy_body(policy))
         log.info("Removed %s from policy %r", user_name, policy_name)
         return True
     except PDApiError as e:
@@ -146,7 +170,7 @@ def build_assignment_maps(token, team_id):
         policy_details[pid] = detail
         for rule in detail.get("escalation_rules", []):
             for target in rule.get("targets", []):
-                if target.get("type") == "user":
+                if is_user_target(target):
                     bucket = user_policies.setdefault(target.get("id"), [])
                     if not any(p["id"] == pid for p in bucket):
                         bucket.append({"id": pid, "name": pname})
@@ -205,7 +229,7 @@ def _plan_policies(token, team_id, user_ids, errors) -> list[dict]:
         for idx, rule in enumerate(policy.get("escalation_rules") or []):
             targets = rule.get("targets") or []
             kept = [t for t in targets
-                    if not (t.get("type", "").startswith("user") and t.get("id") in user_ids)]
+                    if not (is_user_target(t) and t.get("id") in user_ids)]
             if len(kept) == len(targets):
                 continue
             hit |= {t.get("id") for t in targets} & set(user_ids)
@@ -216,6 +240,19 @@ def _plan_policies(token, team_id, user_ids, errors) -> list[dict]:
         if hit:
             planned.append({"policy": policy, "users": sorted(hit)})
     return planned
+
+
+def _check_v3_schedules(token, user_ids, names, errors) -> None:
+    """Shift-based (v3) schedules can't be edited here: a listed user on one blocks the run,
+    and so does membership that can't be checked (fail closed)."""
+    for uid in user_ids:
+        try:
+            for ref in v3_schedule_references(token, uid):
+                errors.append(f"{names[uid]} ({uid}) is on {ref}; remove them there first")
+        except PDApiError as e:
+            if e.is_auth_error:
+                raise
+            errors.append(f"could not check v3 schedules for {names[uid]} ({uid}): {e}")
 
 
 def remove_listed_users(args, token, team_id) -> int:
@@ -233,8 +270,15 @@ def remove_listed_users(args, token, team_id) -> int:
             if e.status_code != 404:
                 raise
             errors.append(f"user {uid} does not exist")
-    members = {m.get("user", {}).get("id")
-               for m in paginate(f"teams/{team_id}/members", token, items_key="members")}
+    try:
+        members = {m.get("user", {}).get("id")
+                   for m in paginate(f"teams/{team_id}/members", token, items_key="members")}
+    except PDApiError as e:
+        if e.status_code == 404:
+            return _usage(f"team {team_id} does not exist.")
+        raise
+    if args.from_schedules:
+        _check_v3_schedules(token, [u for u in user_ids if u in names], names, errors)
     schedules = (_plan_schedules(token, team_id, user_ids, errors)
                  if args.from_schedules else [])
     policies = (_plan_policies(token, team_id, user_ids, errors)
@@ -274,9 +318,8 @@ def remove_listed_users(args, token, team_id) -> int:
     for s in schedules:
         schedule = s["schedule"]
         try:
-            request(f"schedules/{schedule['id']}", token, method="PUT", data={"schedule": {
-                "name": schedule.get("name"),
-                "schedule_layers": schedule.get("schedule_layers", [])}})
+            request(f"schedules/{schedule['id']}", token, method="PUT",
+                    data=schedule_body(schedule))
             log.info("Updated schedule %r.", schedule.get("summary"))
             ok += 1
         except PDApiError as e:
@@ -289,9 +332,7 @@ def remove_listed_users(args, token, team_id) -> int:
         policy = p["policy"]
         try:
             request(f"escalation_policies/{policy['id']}", token, method="PUT",
-                    data={"escalation_policy": {
-                        "name": policy.get("name"),
-                        "escalation_rules": policy.get("escalation_rules", [])}})
+                    data=policy_body(policy))
             log.info("Updated escalation policy %r.", policy.get("summary"))
             ok += 1
         except PDApiError as e:

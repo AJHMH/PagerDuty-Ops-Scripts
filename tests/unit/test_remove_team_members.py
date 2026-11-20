@@ -24,24 +24,37 @@ def _user(uid, name):
 
 
 def mock_account(*, members=("PU1", "PU2"), layer_users=("PU1", "PU3"),
-                 rule_targets=(("user", "PU1"), ("schedule", "PS1"))):
+                 rule_targets=(("user", "PU1"), ("schedule", "PS1")), v3=()):
     """Team PT1; schedule PS1 (one layer); escalation policy PE1 (one rule)."""
     names = {"PU1": "Ann", "PU2": "Bob", "PU3": "Cy"}
     for uid, name in names.items():
         responses.get(f"{B}/users/{uid}", json={"user": {"id": uid, "name": name}})
+    responses.get(f"{B}/v3/schedules", json={
+        "schedules": [{"id": i, "name": n} for i, n in v3], "more": False})
     responses.get(f"{B}/teams/PT1/members", json={
         "members": [{"user": _user(u, names[u]), "role": "responder"} for u in members],
         "more": False})
     responses.get(f"{B}/schedules", json={"schedules": [{"id": "PS1", "summary": "Primary"}],
                                          "more": False})
     responses.get(f"{B}/schedules/PS1", json={"schedule": {
-        "id": "PS1", "name": "Primary", "summary": "Primary",
-        "schedule_layers": [{"id": "L1", "name": "Layer 1",
+        "id": "PS1", "type": "schedule", "name": "Primary", "summary": "Primary",
+        "self": f"{B}/schedules/PS1", "html_url": "https://x.pagerduty.com/schedules/PS1",
+        "time_zone": "America/Chicago", "description": "Tier 1",
+        "teams": [{"id": "PT1", "type": "team_reference"}],
+        "users": [_user(u, names[u]) for u in layer_users],
+        "final_schedule": {"name": "Final Schedule", "rendered_schedule_entries": []},
+        "schedule_layers": [{"id": "L1", "name": "Layer 1", "start": "2026-01-01T00:00:00Z",
+                             "rotation_virtual_start": "2026-01-01T00:00:00Z",
+                             "rotation_turn_length_seconds": 604800,
+                             "rendered_schedule_entries": [],
+                             "rendered_coverage_percentage": 100.0,
                              "users": [{"user": _user(u, names[u])} for u in layer_users]}]}})
     responses.get(f"{B}/escalation_policies", json={
         "escalation_policies": [{"id": "PE1", "summary": "Ops EP"}], "more": False})
     responses.get(f"{B}/escalation_policies/PE1", json={"escalation_policy": {
-        "id": "PE1", "name": "Ops EP", "summary": "Ops EP",
+        "id": "PE1", "type": "escalation_policy", "name": "Ops EP", "summary": "Ops EP",
+        "description": "Ops", "num_loops": 2, "on_call_handoff_notifications": "always",
+        "teams": [{"id": "PT1", "type": "team_reference"}], "services": [],
         "escalation_rules": [{"id": "R1", "escalation_delay_in_minutes": 30,
                               "targets": [{"type": f"{t}_reference", "id": i}
                                           for t, i in rule_targets]}]}})
@@ -77,10 +90,21 @@ def test_apply_removes_from_schedules_policies_then_the_team():
     assert [(r.method, r.url.replace(B, "")) for r in sent] == [
         ("PUT", "/schedules/PS1"), ("PUT", "/escalation_policies/PE1"),
         ("DELETE", "/teams/PT1/members/PU1")]
-    layer = json.loads(sent[0].body)["schedule"]["schedule_layers"][0]
+    schedule = json.loads(sent[0].body)["schedule"]
+    assert {k: schedule[k] for k in ("type", "name", "time_zone", "description", "teams")} == {
+        "type": "schedule", "name": "Primary", "time_zone": "America/Chicago",
+        "description": "Tier 1", "teams": [{"id": "PT1", "type": "team_reference"}]}
+    assert not {"self", "html_url", "users", "final_schedule", "summary"} & set(schedule)
+    layer = schedule["schedule_layers"][0]
     assert [u["user"]["id"] for u in layer["users"]] == ["PU3"]
-    rule = json.loads(sent[1].body)["escalation_policy"]["escalation_rules"][0]
-    assert rule["targets"] == [{"type": "schedule_reference", "id": "PS1"}]
+    assert layer["rotation_turn_length_seconds"] == 604800
+    assert "rendered_schedule_entries" not in layer
+    policy = json.loads(sent[1].body)["escalation_policy"]
+    assert (policy["num_loops"], policy["on_call_handoff_notifications"]) == (2, "always")
+    assert policy["teams"] == [{"id": "PT1", "type": "team_reference"}]
+    assert "services" not in policy
+    assert policy["escalation_rules"][0]["targets"] == [
+        {"type": "schedule_reference", "id": "PS1"}]
 
 
 @responses.activate
@@ -177,3 +201,35 @@ def test_auth_error_aborts_the_run():
 def test_interactive_mode_still_needs_a_tty(monkeypatch):
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
     assert rtm.main(["--team-id", "PT1"]) == 2
+
+
+@responses.activate
+def test_user_on_a_shift_based_v3_schedule_blocks_from_schedules():
+    mock_account(v3=(("V1", "Night shift"),))
+    assert rtm.main([*ALL, "-y"]) == 2
+    assert writes() == []
+
+
+@responses.activate
+def test_v3_membership_that_cannot_be_checked_fails_closed():
+    mock_account()
+    responses.replace(responses.GET, f"{B}/v3/schedules", status=500,
+                      json={"error": {"message": "down"}})
+    assert rtm.main([*ALL, "-y"]) == 2
+    assert writes() == []
+
+
+@responses.activate
+def test_unknown_team_is_a_usage_error():
+    mock_account()
+    responses.replace(responses.GET, f"{B}/teams/PT1/members", status=404,
+                      json={"error": {"message": "Not Found"}})
+    assert rtm.main(["--team-id", "PT1", "--user-ids", "PU1", "-y"]) == 2
+
+
+@responses.activate
+def test_interactive_assignment_map_finds_user_reference_policy_targets():
+    mock_account()
+    responses.get(f"{B}/schedules/PS1/users", json={"users": [], "more": False})
+    _, user_policies, _ = rtm.build_assignment_maps("t", "PT1")
+    assert user_policies["PU1"] == [{"id": "PE1", "name": "Ops EP"}]

@@ -183,6 +183,8 @@ Interactive mode walks each member through removal from schedule layers and esca
 With `--user-ids`, nothing is prompted.
 - **Validated first:** the command exits 2 before any write if a user doesn't exist, or if a removal would leave a schedule layer or an escalation rule empty. In that case, add someone else to the layer or rule first.
 - **Scope:** `--from-schedules` and `--from-escalation-policies` act only on the team's own schedules and policies. Each one gets one update covering all the listed users.
+- **Shift-based (v3) schedules:** these can't be edited here. With `--from-schedules`, a listed user who is on any v3 schedule blocks the run (exit 2), and so does v3 membership that can't be checked.
+- **Overrides:** schedule overrides aren't removed. Clear them with `pd-schedule-overrides`.
 - **Order:** users are removed from the team last. If a user's schedule or policy update fails, they stay on the team and the run exits 1.
 - **Re-runs:** re-running skips whatever is already done, so it finishes the job safely.
 - **Write safety:** `--dry-run` previews every change, and `-y` is required on a non-interactive stdin.
