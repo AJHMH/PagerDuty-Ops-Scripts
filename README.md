@@ -77,6 +77,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 | `pd-subscriptions` | pd_subscriptions.py | **yes** | List / bulk subscribe-unsubscribe users and teams to business services or incidents (idempotent) |
 | `pd-custom-fields` | pd_custom_fields.py | **yes** | Export / diff-first apply of service custom fields, incident types, and their fields (`--prune` to delete) |
 | `pd-cmdb-enrichment` | pd_cmdb_enrichment.py | **yes** | **Early Access** (`--early-access` required): ServiceNow CMDB tables, enrichment schemas, CSV records, associations |
+| `pd-service-field-values` | pd_service_field_values.py | **yes** | Export / bulk-apply service custom field values from a wide CSV (typed validation, idempotent) |
 | `pd-sn-sync` | pd_sn_sync.py | **yes** (ServiceNow) | Reconcile PD IDs stored in ServiceNow groups/users; plan → rehearse → apply ([guide](docs/servicenow.md)) |
 
 Per-command usage and examples: [docs/usage.md](docs/usage.md).

@@ -62,6 +62,7 @@ pd-schedule-overrides = "pagerduty_ops.console_scripts:pd_schedule_overrides"
 pd-subscriptions = "pagerduty_ops.console_scripts:pd_subscriptions"
 pd-custom-fields = "pagerduty_ops.console_scripts:pd_custom_fields"
 pd-cmdb-enrichment = "pagerduty_ops.console_scripts:pd_cmdb_enrichment"
+pd-service-field-values = "pagerduty_ops.console_scripts:pd_service_field_values"
 
 [tool.setuptools]
 packages = ["pagerduty_ops", "pagerduty_ops.commands"]

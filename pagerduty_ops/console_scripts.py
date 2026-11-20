@@ -155,3 +155,7 @@ def pd_custom_fields() -> None:
 
 def pd_cmdb_enrichment() -> None:
     _entry("cmdb_enrichment")
+
+
+def pd_service_field_values() -> None:
+    _entry("service_field_values")

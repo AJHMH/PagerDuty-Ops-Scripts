@@ -42,6 +42,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   when one is given.
 - `docs/backlog.md`: the tabled incident-storm design, unexplored API-schema candidates,
   and live-verification follow-ups.
+- `pd-service-field-values` (export / apply): bulk service custom field values from a
+  wide, round-trippable CSV. Every cell is validated against the field's type and options
+  before any write. It sends one atomic `PUT` per service with only the changed fields, and
+  `--clear-empty` resets values.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

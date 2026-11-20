@@ -24,7 +24,6 @@ Status: **tabled by the maintainer** (2026-11-20). Agreed design so far:
 | Area | Endpoints | Bulk value |
 |---|---|---|
 | Event Rules → Event Orchestration migration | `POST /services/{id}/rules/convert` | Convert legacy service event rules account-wide, with a dry-run inventory first. |
-| Service custom field *values* | `PUT /services/{id}/custom_fields/values` | Set field values (tier, owner, CI) on many services from CSV. Pairs with `pd-custom-fields`. |
 | Incident Workflows | `/incident_workflows`, triggers | Export/diff-apply workflows and bulk-attach triggers to services. |
 | Automation Actions | `/automation_actions/actions`, runners, service/team associations | Bulk-associate actions with services and teams. |
 | Business services | `/business_services` | Export/apply definitions (dependencies are already in `pd-service-deps`). |
