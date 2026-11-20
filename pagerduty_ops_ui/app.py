@@ -16,13 +16,13 @@ from starlette.middleware.sessions import SessionMiddleware
 from . import files as run_files
 from .catalog import describe, engine_catalog
 from .forms import BadValues, build_argv, form_for
-from .gate import gate
+from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
-from .review import input_hash, output_hash
+from .review import MODE_FLAGS, input_hash, output_hash
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .runner import run_command
 from .settings import Settings
-from .store import RunRecord, RunStore
+from .store import RunFile, RunRecord, RunStore
 
 # Roles are read from the session at sign-in; a short session means removing someone from a
 # PD-Ops group in AD/Okta takes effect within a working day.
@@ -153,9 +153,15 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         except BaseException:
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
+        return await execute(entry, argv, run_id, run_dir, inputs, admin, role,
+                             kind="dry-run" if verdict.writes else "report",
+                             timeout_minutes=verdict.timeout_minutes)
+
+    async def execute(entry, argv, run_id, run_dir, inputs, admin, role, *, kind,
+                      timeout_minutes=None, applied_from=None) -> dict:
+        """Run the command in its own process and store the Run with its files."""
         started = _now()
-        timeout = (verdict.timeout_minutes * 60 if verdict.timeout_minutes
-                   else settings.run_timeout_seconds)
+        timeout = timeout_minutes * 60 if timeout_minutes else settings.run_timeout_seconds
         result = await run_in_threadpool(
             run_command, entry, argv, cwd=run_dir, extra_env=settings.extra_env,
             secret_env=settings.secret_env, timeout=timeout)
@@ -164,12 +170,91 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             id=run_id, command=entry.name, argv=argv, requested_by=admin.email,
             requester_name=admin.name, requester_role=role.label, started_at=started,
             finished_at=_now(), exit_code=result.exit_code, outcome=result.outcome,
-            stdout=result.stdout, stderr=result.stderr,
-            kind="dry-run" if verdict.writes else "report",
+            stdout=result.stdout, stderr=result.stderr, kind=kind, applied_from=applied_from,
             input_hash=input_hash(entry.name, argv, [(f.path, f.sha256) for f in inputs]),
             output_hash=output_hash(result.stdout, result.stderr,
                                     [(f.path, f.sha256) for f in outputs])),
             inputs + outputs)
+
+    def own_dry_run(run_id: str, admin: Admin, role: Role, action: str) -> dict:
+        if role < Role.OPERATOR:
+            raise HTTPException(403, f"Only Operators and Approvers can {action} dry runs.")
+        run = store.get(run_id)
+        if run is None:
+            raise HTTPException(404, "No such Run.")
+        if run["kind"] != "dry-run":
+            raise HTTPException(409, f"Only a dry run can be {action}ed.")
+        if run["requested_by"] != admin.email:
+            raise HTTPException(403, f"Only the admin who ran this dry run can {action} it.")
+        return run
+
+    @app.post("/api/runs/{run_id}/review")
+    def review_run(run_id: str, who: SignedIn):
+        """The admin who ran a successful dry run records that they reviewed its diff."""
+        admin, role = who
+        run = own_dry_run(run_id, admin, role, "review")
+        if run["outcome"] != "succeeded":
+            raise HTTPException(409, "Only a dry run that succeeded can be reviewed: its "
+                                     "changes weren't fully determined.")
+        store.mark_reviewed(run_id, admin.email)
+        return store.get(run_id)
+
+    def copy_inputs(source_dir, target_dir, inputs: list[dict]) -> list[RunFile]:
+        """The reviewed dry run's uploads, verified unchanged, copied into a new Run."""
+        records = []
+        for f in inputs:
+            source = run_files.resolve(source_dir, f["path"])
+            if not source.is_file() or run_files.sha256_file(source) != f["sha256"]:
+                raise HTTPException(409, f"The input {f['path']} has changed since the dry "
+                                         "run was reviewed; run a new dry run.")
+            target = target_dir / source.relative_to(source_dir.resolve())
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
+            records.append(RunFile(role="input", path=f["path"], size=f["size"],
+                                   sha256=f["sha256"]))
+        return records
+
+    @app.post("/api/runs/{run_id}/apply", status_code=201)
+    async def apply_run(run_id: str, who: SignedIn):
+        """Apply a reviewed dry run: same command, arguments and inputs (ADR 0003). A fresh
+        dry run first must produce the reviewed output, or nothing is applied (ADR 0011)."""
+        admin, role = who
+        dry = own_dry_run(run_id, admin, role, "apply")
+        if dry["reviewed_by"] != admin.email:
+            raise HTTPException(409, "This dry run hasn't been reviewed: review its changes "
+                                     "before applying it.")
+        entry = catalog.get(dry["command"])
+        if entry is None:
+            raise HTTPException(404, f"Unknown command {dry['command']!r}.")
+        dry_dir = settings.run_root / run_id
+        inputs = [f for f in dry["files"] if f["role"] == "input"]
+        neutral = [a for a in dry["argv"] if a not in MODE_FLAGS]
+        apply_id = str(uuid.uuid4())
+        if not store.claim_apply(run_id, apply_id):  # atomic: at most one apply, even racing
+            raise HTTPException(409, "This dry run has already been applied.")
+        try:
+            dry_argv, apply_argv, verdict = gate_apply(entry, neutral, dry_dir,
+                                                       settings.secret_env.values())
+            fresh_id = str(uuid.uuid4())
+            fresh_dir = settings.run_root / fresh_id
+            fresh_dir.mkdir(parents=True)
+            fresh = await execute(entry, dry_argv, fresh_id, fresh_dir,
+                                  copy_inputs(dry_dir, fresh_dir, inputs), admin, role,
+                                  kind="dry-run", timeout_minutes=verdict.timeout_minutes)
+            if fresh["outcome"] != "succeeded" or fresh["output_hash"] != dry["output_hash"]:
+                raise HTTPException(409, {
+                    "message": "What this would change has changed since you reviewed it, "
+                               "so nothing was applied. Review the fresh dry run.",
+                    "fresh_dry_run_id": fresh_id})
+            apply_dir = settings.run_root / apply_id
+            apply_dir.mkdir(parents=True)
+            apply_inputs = copy_inputs(dry_dir, apply_dir, inputs)
+        except BaseException:
+            store.release_apply(run_id, apply_id)
+            raise
+        return await execute(entry, apply_argv, apply_id, apply_dir, apply_inputs, admin, role,
+                             kind="apply", timeout_minutes=verdict.timeout_minutes,
+                             applied_from=run_id)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, who: SignedIn):

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { fileUrl, getRun, type Review, type Run } from "./api";
+import { ApiError, applyRun, fileUrl, getRun, reviewRun, type Me, type Review,
+  type Run } from "./api";
 
 const SIGN = { add: "+", change: "~", delete: "−" } as const;
 
@@ -44,11 +45,75 @@ const OUTCOME_LABELS: Record<Run["outcome"], string> = {
   "stopped": "Stopped",
 };
 
-export function RunPage({ id }: { id: string }) {
+// Review, then Apply (#73): only for the admin who ran a dry run that succeeded. The service
+// enforces every gate; this only decides which step to offer.
+function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [understood, setUnderstood] = useState(false);
+  const [error, setError] = useState("");
+  const mine = run.requested_by === me.email && me.role !== "viewer";
+  if (run.kind !== "dry-run" || !mine || run.outcome !== "succeeded" || !run.review?.complete) {
+    return null;
+  }
+  if (run.applied_run_id) {
+    return (
+      <p className="notice">Applied: <a href={`#/runs/${encodeURIComponent(run.applied_run_id)}`}>
+        see the apply</a>.</p>
+    );
+  }
+
+  async function act(step: () => Promise<Run>) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await step();
+      if (result.id === run.id) onChange(result);
+      else window.location.hash = `#/runs/${encodeURIComponent(result.id)}`;
+    } catch (e) {
+      const fresh = e instanceof ApiError && typeof e.detail === "object" && e.detail !== null
+        ? (e.detail as { fresh_dry_run_id?: string }).fresh_dry_run_id : undefined;
+      if (fresh) {
+        sessionStorage.setItem("pd-ops-notice", e instanceof Error ? e.message : "");
+        window.location.hash = `#/runs/${encodeURIComponent(fresh)}`;
+      } else setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <section aria-label="Apply" className="steps">
+      {!run.reviewed_by ? (
+        <button type="button" disabled={busy} onClick={() => act(() => reviewRun(run.id))}>
+          I've reviewed these changes
+        </button>
+      ) : (
+        <>
+          <p>Reviewed by you. Applying runs a fresh dry run first; if anything differs from
+            what you reviewed, nothing is applied and you'll see the new changes.</p>
+          <label className="check">
+            <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
+            I understand this will change live data.
+          </label>
+          <button type="button" className="danger" disabled={busy || !understood}
+                  onClick={() => act(() => applyRun(run.id))}>
+            {busy ? "Applying…" : "Apply these changes"}
+          </button>
+        </>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
+export function RunPage({ id, me }: { id: string; me: Me }) {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
 
   useEffect(() => {
+    setNotice(sessionStorage.getItem("pd-ops-notice") ?? "");
+    sessionStorage.removeItem("pd-ops-notice");
     getRun(id).then(setRun).catch((e: Error) => setError(e.message));
   }, [id]);
 
@@ -60,11 +125,17 @@ export function RunPage({ id }: { id: string }) {
       <p className={`outcome ${run.outcome}`}>
         {OUTCOME_LABELS[run.outcome]}{run.exit_code != null && ` (exit ${run.exit_code})`}
       </p>
+      {notice && <p className="error" role="alert">{notice}</p>}
       {run.kind === "dry-run" && (
         <p className="notice"><strong>Dry run</strong>: nothing was changed.</p>
       )}
+      {run.kind === "apply" && run.applied_from && (
+        <p className="notice"><strong>Apply</strong> of the reviewed{" "}
+          <a href={`#/runs/${encodeURIComponent(run.applied_from)}`}>dry run</a>.</p>
+      )}
       {run.message && <p className="error" role="alert">{run.message}</p>}
       {run.review && <ReviewPanel review={run.review} />}
+      <ApplySteps run={run} me={me} onChange={setRun} />
       <dl>
         <dt>Requested by</dt><dd>{run.requester_name} ({run.requested_by}, {run.requester_role})</dd>
         <dt>Started</dt><dd>{new Date(run.started_at).toLocaleString()}</dd>

@@ -9,7 +9,8 @@ recorded in [CONTEXT.md](../CONTEXT.md) and ADRs 0001–0015; the spec is issue 
 - They see the stored Run, with its output files ready to download.
 - Viewers run read-only commands.
 - Operators and Approvers can also **dry-run** commands that write, and review what would change.
-- Nothing is applied until Phase 2.
+
+**Phase 2 has started (#73).** An Operator can **apply** a dry run they reviewed, if it isn't an Irreversible operation.
 
 Commands that write are refused until Apply arrives in Phase 2.
 
@@ -84,6 +85,18 @@ A `[dry-run]` line whose verb isn't recognised counts as an "other change", unle
 **Hashes.** Every Run stores two, ready for #73 to match an apply to the reviewed dry run:
 - `input_hash`: the command, the argv without its mode flags (`--dry-run`, `--apply`, `-y`, `--yes`), and each uploaded file's hash. A dry run and the apply of the same inputs therefore share it.
 - `output_hash`: the classified diff lines and each output file's hash. Log timestamps don't change it.
+
+## Apply (#73, ADRs 0003 and 0011)
+
+1. **Run and review.** The admin who ran a dry run that succeeded and completed records that they reviewed it: `POST /api/runs/{id}/review`. Only that admin can review it, and only Operators and Approvers can review at all.
+2. **Apply.** That admin applies it with `POST /api/runs/{id}/apply`. The apply takes no new inputs: it reuses the dry run's command, arguments and uploaded files.
+   - **Inputs:** each uploaded file is re-verified against its recorded hash. A changed file refuses the apply (409).
+   - **Irreversible operations:** checked with the engine's `assess()`, and refused (403) until Approvals arrive in Phase 3 (#77).
+   - **Fresh dry run:** a fresh dry run of the same inputs runs and is stored. If it doesn't succeed, or its `output_hash` differs from the reviewed one, nothing is applied. The response is 409 with `fresh_dry_run_id`, and that new dry run must be reviewed instead.
+   - **The command line:** only then is the apply run, with the mode-neutral argv plus `-y`, or `--apply -y` for diff-first commands. `-y` is added only after every gate has passed. The apply is stored with `kind: "apply"` and `applied_from`.
+   - **Once only:** a dry run is applied at most once. An atomic claim on `applied_run_id` covers concurrent requests too.
+
+The writing-run queue, timeouts on the Phase 2 scale, and cancellation are #74. Cap overrides are #75.
 
 ## What a Run is refused for
 
@@ -160,4 +173,5 @@ These are later tickets:
 - Run history search (#69);
 - the SQL Server CI job and migrations (#70);
 - the Windows host packaging (#71);
-- Apply and everything after it (Phase 2 onwards).
+- the rest of Phase 2: the writing-run queue and cancellation (#74), cap overrides (#75), and the Ledger and 90-day purge (#76);
+- Phase 3: Approvals (#77) and what follows them.

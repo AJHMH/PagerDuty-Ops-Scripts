@@ -3,12 +3,13 @@ the engine's styles: diff lines on stdout and "[dry-run] ..." lines on stderr.""
 
 import argparse
 import json
+import os
 import sys
 
 from pagerduty_ops.cli import add_logging_args, add_token_args
 from pagerduty_ops.risk import writes_with_dry_run
 
-RISK = writes_with_dry_run()
+RISK = writes_with_dry_run(irreversible_flags=("--purge",))
 
 
 def build_parser():
@@ -27,14 +28,32 @@ def build_parser():
                    help="Preview this many '[dry-run] line N: would create ...' lines "
                         "(like pd-bulk-maintenance-window).")
     p.add_argument("--fail", action="store_true", help="Exit 1 before previewing anything.")
+    p.add_argument("--purge", action="store_true", help="Delete what isn't listed (irreversible).")
+    p.add_argument("-i", "--input", help="A CSV whose first line appears in the preview.")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    first_input_line = ""
+    if args.input:
+        with open(args.input, encoding="utf-8") as f:
+            first_input_line = f.readline().strip()
     if not args.dry_run:
-        sys.stdout.write("APPLIED\n")  # the UI must never get here in Phase 1
+        # Like the engine's confirm(): an unattended write needs -y.
+        if not args.yes:
+            sys.stderr.write("Refusing to write without -y.\n")
+            return 2
+        exit_code = int(os.environ.get("UI_FIXTURE_APPLY_EXIT", "0"))
+        if exit_code:
+            sys.stderr.write(f"Error: apply failed with exit {exit_code}\n")
+            return exit_code
+        sys.stdout.write("APPLIED\n")
         return 0
+    if first_input_line:
+        sys.stdout.write(f"~ input: {first_input_line}\n")
+    if os.environ.get("UI_FIXTURE_DRIFT"):  # live state changed since the reviewed dry run
+        sys.stdout.write("+ drifted-service\n")
     if args.fail:
         sys.stderr.write("Error: could not reach PagerDuty\n")
         return 1
