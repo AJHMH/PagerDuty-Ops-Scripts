@@ -75,14 +75,18 @@ def live_fields(token, base) -> list[dict]:
 
 
 def live_types(token) -> list[dict]:
-    types = request("incidents/types", token).get("incident_types") or []
+    """All incident types (filter=all, so disabled ones are included), with the
+    parent reference ({id, type}) resolved to the parent's name."""
+    types = request("incidents/types", token, params={"filter": "all"}).get(
+        "incident_types") or []
+    name_by_id = {t.get("id"): t.get("name") for t in types if t.get("id")}
     out = []
     for t in sorted(types, key=lambda x: x.get("name") or ""):
-        parent = t.get("parent_type")
+        parent = t.get("parent") or t.get("parent_type")
+        if isinstance(parent, dict):
+            parent = parent.get("name") or name_by_id.get(parent.get("id")) or parent.get("id")
         out.append({"name": t.get("name"), "display_name": t.get("display_name"),
-                    "enabled": t.get("enabled"),
-                    "parent_type": parent.get("name") if isinstance(parent, dict) else parent,
-                    "id": t.get("id")})
+                    "enabled": t.get("enabled"), "parent_type": parent, "id": t.get("id")})
     return out
 
 

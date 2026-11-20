@@ -104,3 +104,15 @@ def test_invalid_file_rejected(tmp_path):
     with pytest.raises(SystemExit) as exc:
         cf.main(["apply", "-i", str(tmp_path)])
     assert exc.value.code == 2
+
+
+@responses.activate
+def test_live_types_include_disabled_and_resolve_parent_names():
+    responses.get(TYPES, json={"incident_types": [
+        {"id": "T1", "name": "incident_default", "display_name": "Base", "enabled": True},
+        {"id": "T2", "name": "security", "display_name": "Security", "enabled": False,
+         "parent": {"id": "T1", "type": "incident_type_reference"}}]})
+    types = {t["name"]: t for t in cf.live_types("t")}
+    assert "filter=all" in responses.calls[0].request.url
+    assert types["security"]["parent_type"] == "incident_default"
+    assert types["security"]["enabled"] is False
