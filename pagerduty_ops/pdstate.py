@@ -117,6 +117,10 @@ class PDState:
         return None
 
 
+# Shift-based (v3) schedules are an Early Access API: every v3 call must send this header.
+V3_EARLY_ACCESS_HEADERS = {"X-EARLY-ACCESS": "flexible-schedules-early-access"}
+
+
 def v3_schedule_references(token, user_id: str) -> list[str]:
     """Shift-based (v3) schedules are not in the v2 /schedules list; query them by user.
 
@@ -124,4 +128,4 @@ def v3_schedule_references(token, user_id: str) -> list[str]:
     """
     return [f"v3 schedule {s.get('name') or s.get('id')}"
             for s in paginate("v3/schedules", token, params={"user_id": user_id},
-                              items_key="schedules")]
+                              items_key="schedules", extra_headers=V3_EARLY_ACCESS_HEADERS)]

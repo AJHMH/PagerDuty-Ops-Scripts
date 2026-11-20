@@ -233,3 +233,13 @@ def test_interactive_assignment_map_finds_user_reference_policy_targets():
     responses.get(f"{B}/schedules/PS1/users", json={"users": [], "more": False})
     _, user_policies, _ = rtm.build_assignment_maps("t", "PT1")
     assert user_policies["PU1"] == [{"id": "PE1", "name": "Ops EP"}]
+
+
+@responses.activate
+def test_v3_membership_check_sends_the_early_access_header():
+    mock_account()
+    assert rtm.main([*ALL, "--dry-run"]) == 0
+    v3_calls = [c.request for c in responses.calls if "/v3/schedules" in c.request.url]
+    assert v3_calls
+    assert all(r.headers.get("X-EARLY-ACCESS") == "flexible-schedules-early-access"
+               for r in v3_calls)
