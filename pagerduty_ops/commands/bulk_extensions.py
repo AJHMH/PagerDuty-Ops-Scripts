@@ -56,7 +56,7 @@ def find_schema(token, name_substring) -> dict:
 
 def resolve_services(token, args) -> list[dict]:
     if args.services_csv:
-        rows = load_csv_rows(args.services_csv, {"service_id"}, skip_if_missing=("service_id",))
+        rows = load_csv_rows(args.services_csv, {"service_id"}, require_values=("service_id",))
         return [{"id": r["service_id"], "name": r["service_id"]} for r in rows]
     return fetch_all("services", token, name_filter=args.service_filter, label="services")
 

@@ -90,12 +90,25 @@ def _write_csv(tmp_path, text):
     return str(p)
 
 
-def test_load_csv_rows_happy_path(tmp_path):
-    path = _write_csv(tmp_path, "service_id,start_time\nP1,2026-05-01T02:00:00Z\n,skipped\n")
-    rows = load_csv_rows(path, {"service_id", "start_time"}, skip_if_missing=("service_id",))
+def test_load_csv_rows_happy_path_skips_only_blank_rows(tmp_path):
+    path = _write_csv(tmp_path, "service_id,start_time\nP1,2026-05-01T02:00:00Z\n,\n")
+    rows = load_csv_rows(path, {"service_id", "start_time"}, require_values=("service_id",))
     assert len(rows) == 1
     assert rows[0]["service_id"] == "P1"
     assert rows[0]["_line"] == 2
+
+
+def test_load_csv_rows_partial_row_missing_required_value_exits_2(tmp_path, capsys):
+    path = _write_csv(tmp_path, "service_id,start_time\nP1,2026-05-01T02:00:00Z\n"
+                                ",2026-05-02T02:00:00Z\nP3,\n , x \n")
+    with pytest.raises(SystemExit) as exc:
+        load_csv_rows(path, {"service_id", "start_time"},
+                      require_values=("service_id", "start_time"))
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "line 3: missing service_id" in err
+    assert "line 4: missing start_time" in err
+    assert "line 5: missing service_id" in err
 
 
 def test_load_csv_rows_missing_column_exits_2(tmp_path, capsys):
@@ -122,3 +135,13 @@ def test_parse_iso8601_accepts_z_and_offset():
 def test_parse_iso8601_rejects_invalid(bad):
     with pytest.raises(SystemExit):
         parse_iso8601(bad, field="t", line=3)
+
+
+def test_load_csv_rows_rejects_surplus_cells(tmp_path, capsys):
+    path = _write_csv(tmp_path, "entity_type,entity_id,tag_label,action\n"
+                                "services,PS1,prod,add\nservices,PS1,prod,add,remove\n")
+    with pytest.raises(SystemExit) as exc:
+        load_csv_rows(path, {"entity_type", "entity_id", "tag_label", "action"},
+                      require_values=("entity_id",))
+    assert exc.value.code == 2
+    assert "line 3: 1 more cell(s) than the header" in capsys.readouterr().err

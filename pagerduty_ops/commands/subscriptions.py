@@ -96,7 +96,7 @@ def list_main(args) -> int:
 
 
 def load_rows(path) -> list[tuple]:
-    rows = load_csv_rows(path, set(COLUMNS), skip_if_missing=("subscriber_id", "subscribable_id"))
+    rows = load_csv_rows(path, set(COLUMNS), require_values=("subscriber_id", "subscribable_id"))
     out, bad = [], []
     for r in rows:
         vals = (r["action"].lower(), r["subscriber_kind"].lower(), r["subscriber_id"],

@@ -224,7 +224,7 @@ def triggers_export_main(args) -> int:
 
 def triggers_apply_main(args) -> int:
     token = init(args)
-    # No skip_if_missing: an incomplete row is a validation error, never silently dropped.
+    # Missing IDs are reported below as validation errors (rows are never dropped).
     rows = load_csv_rows(args.csv_file, {"action", "trigger_id", "service_id"})
     triggers = {t["id"]: t for t in list_triggers(token)}
     services = {s["id"] for s in paginate("services", token)}
