@@ -25,7 +25,7 @@ import sys
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-from ..api import PDApiError, paginate, request
+from ..api import PDApiError, request
 from ..cli import (
     EXIT_FAILURES,
     EXIT_OK,
@@ -37,7 +37,7 @@ from ..cli import (
     init,
 )
 from ..log import get_logger
-from ..pdstate import PDState, ref_ids
+from ..pdstate import PDState, ref_ids, v3_schedule_references
 from ..plan import load_plan, new_plan, plan_hash, write_plan
 from ..risk import DELETES_SCIM_USER, READ_ONLY, writes_with_dry_run
 from .scim_user_audit import (
@@ -94,16 +94,6 @@ def rest_user_index(pd: PDState) -> dict[str, list[str]]:
         if u.get("email"):
             by_email[u["email"].strip().lower()].append(uid)
     return by_email
-
-
-def v3_schedule_references(token, rest_id: str) -> list[str]:
-    """Shift-based (v3) schedules are not in the v2 /schedules list; query them by user.
-
-    Raises PDApiError if membership cannot be verified, so callers fail closed.
-    """
-    return [f"v3 schedule {s.get('name') or s.get('id')}"
-            for s in paginate("v3/schedules", token, params={"user_id": rest_id},
-                              items_key="schedules")]
 
 
 def on_call_references(pd: PDState, rest_id: str) -> list[str]:

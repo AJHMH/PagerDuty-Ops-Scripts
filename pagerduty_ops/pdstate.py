@@ -115,3 +115,17 @@ class PDState:
         if object_id in self.webhook_ids:
             return "webhook"
         return None
+
+
+# Shift-based (v3) schedules are an Early Access API: every v3 call must send this header.
+V3_EARLY_ACCESS_HEADERS = {"X-EARLY-ACCESS": "flexible-schedules-early-access"}
+
+
+def v3_schedule_references(token, user_id: str) -> list[str]:
+    """Shift-based (v3) schedules are not in the v2 /schedules list; query them by user.
+
+    Raises PDApiError if membership cannot be verified, so callers fail closed.
+    """
+    return [f"v3 schedule {s.get('name') or s.get('id')}"
+            for s in paginate("v3/schedules", token, params={"user_id": user_id},
+                              items_key="schedules", extra_headers=V3_EARLY_ACCESS_HEADERS)]

@@ -1,7 +1,14 @@
-"""Interactively remove users from a PagerDuty team.
+"""Remove users from a PagerDuty team, interactively or from a list of user IDs.
 
-For each member: walk through removal from schedule layers, escalation policy
-rule targets, and finally the team itself. Fully paginated (the previous
+Interactive (no --user-ids): for each member, walk through removal from schedule
+layers, escalation policy rule targets, and finally the team itself.
+
+Non-interactive (--user-ids, for cron, scripts and the UI; ADR 0009): the named users
+are removed from the team, and with --from-schedules / --from-escalation-policies also
+from the team's schedule layers and escalation rules. Everything is validated before
+the first write, --dry-run previews, -y skips the prompt, and re-runs skip what is
+already done. A user stays on the team if removing them from a schedule or policy
+failed, so the re-run can finish the job. Fully paginated (the previous
 version silently truncated members/schedules/policies at the API default of
 25 — dangerous, since a user could be removed from the team while still on an
 unseen schedule). --dry-run previews every API call.
@@ -12,10 +19,11 @@ from __future__ import annotations
 import sys
 
 from ..api import PDApiError, paginate, request
-from ..cli import init, standard_parser
+from ..cli import EXIT_USAGE, confirm, finish_bulk, init, standard_parser
 from ..config import get_team_id
 from ..log import get_logger
 from ..output import render_rows
+from ..pdstate import v3_schedule_references
 from ..risk import writes_with_dry_run
 
 log = get_logger("remove_team_members")
@@ -25,11 +33,51 @@ RISK = writes_with_dry_run()
 
 
 def build_parser():
-    p = standard_parser("Interactively remove users from a PagerDuty team.")
+    p = standard_parser("Remove users from a PagerDuty team (interactive, or --user-ids).")
     p.add_argument("--team-id", help="PagerDuty team ID (or set PD_TEAM_ID).")
+    p.add_argument("--user-ids",
+                   help="Comma-separated PagerDuty user IDs to remove, without prompting.")
+    p.add_argument("--from-schedules", action="store_true",
+                   help="With --user-ids: also remove them from the team's schedule layers.")
+    p.add_argument("--from-escalation-policies", action="store_true",
+                   help="With --user-ids: also remove them from the team's escalation rules.")
     p.add_argument("--dry-run", action="store_true",
                    help="Show what would be done without modifying anything.")
+    p.add_argument("-y", "--yes", action="store_true",
+                   help="With --user-ids: skip the confirmation prompt.")
     return p
+
+
+# Writable fields only: a PUT must carry the settings it is not changing (time zone, loops,
+# team ownership), and must not echo read-only ones (rendered entries, html_url, ...).
+SCHEDULE_FIELDS = ("type", "name", "time_zone", "description", "teams", "schedule_layers")
+LAYER_FIELDS = ("id", "name", "start", "end", "rotation_virtual_start",
+                "rotation_turn_length_seconds", "users", "restrictions")
+POLICY_FIELDS = ("type", "name", "description", "num_loops", "on_call_handoff_notifications",
+                 "teams", "escalation_rules")
+RULE_FIELDS = ("id", "escalation_delay_in_minutes", "targets")
+
+
+def _pick(obj: dict, fields) -> dict:
+    return {k: obj[k] for k in fields if k in obj}
+
+
+def schedule_body(schedule: dict) -> dict:
+    body = _pick(schedule, SCHEDULE_FIELDS)
+    body["schedule_layers"] = [_pick(layer, LAYER_FIELDS)
+                               for layer in schedule.get("schedule_layers") or []]
+    return {"schedule": body}
+
+
+def policy_body(policy: dict) -> dict:
+    body = _pick(policy, POLICY_FIELDS)
+    body["escalation_rules"] = [_pick(rule, RULE_FIELDS)
+                                for rule in policy.get("escalation_rules") or []]
+    return {"escalation_policy": body}
+
+
+def is_user_target(target: dict) -> bool:
+    return target.get("type") in ("user_reference", "user")
 
 
 def get_schedule(token, schedule_id) -> dict:
@@ -58,12 +106,7 @@ def remove_user_from_schedule(token, schedule_id, user_id, user_name, dry_run=Fa
               file=sys.stderr)
         return True
     try:
-        request(f"schedules/{schedule_id}", token, method="PUT", data={
-            "schedule": {
-                "name": schedule.get("name"),
-                "schedule_layers": schedule.get("schedule_layers", []),
-            }
-        })
+        request(f"schedules/{schedule_id}", token, method="PUT", data=schedule_body(schedule))
         log.info("Removed %s from schedule %r", user_name, schedule_name)
         return True
     except PDApiError as e:
@@ -82,7 +125,7 @@ def remove_user_from_policy(token, policy_id, user_id, user_name, *, policy=None
         targets = rule.get("targets")
         if not targets:
             continue
-        kept = [t for t in targets if not (t.get("type") == "user" and t.get("id") == user_id)]
+        kept = [t for t in targets if not (is_user_target(t) and t.get("id") == user_id)]
         if len(kept) < len(targets):
             rule["targets"] = kept
             modified = True
@@ -95,12 +138,8 @@ def remove_user_from_policy(token, policy_id, user_id, user_name, *, policy=None
               file=sys.stderr)
         return True
     try:
-        request(f"escalation_policies/{policy_id}", token, method="PUT", data={
-            "escalation_policy": {
-                "name": policy.get("name"),
-                "escalation_rules": policy.get("escalation_rules", []),
-            }
-        })
+        request(f"escalation_policies/{policy_id}", token, method="PUT",
+                data=policy_body(policy))
         log.info("Removed %s from policy %r", user_name, policy_name)
         return True
     except PDApiError as e:
@@ -131,18 +170,207 @@ def build_assignment_maps(token, team_id):
         policy_details[pid] = detail
         for rule in detail.get("escalation_rules", []):
             for target in rule.get("targets", []):
-                if target.get("type") == "user":
+                if is_user_target(target):
                     bucket = user_policies.setdefault(target.get("id"), [])
                     if not any(p["id"] == pid for p in bucket):
                         bucket.append({"id": pid, "name": pname})
     return user_schedules, user_policies, policy_details
 
 
+# ---------------- non-interactive (--user-ids) ----------------
+
+def _usage(message: str) -> int:
+    log.error("%s", message)
+    return EXIT_USAGE
+
+
+def _parse_user_ids(raw: str) -> list[str]:
+    ids = []
+    for part in raw.split(","):
+        uid = part.strip()
+        if uid and uid not in ids:
+            ids.append(uid)
+    return ids
+
+
+def _layer_user_id(entry: dict) -> str | None:
+    """Schedule layer users are ``{"user": {...}}``; tolerate a bare reference too."""
+    return (entry.get("user") or entry).get("id")
+
+
+def _plan_schedules(token, team_id, user_ids, errors) -> list[dict]:
+    """Schedules (full detail) where a listed user sits on a layer, with layers rewritten."""
+    planned = []
+    for ref in paginate("schedules", token, params={"team_ids[]": [team_id]}):
+        schedule = get_schedule(token, ref["id"])
+        hit = set()
+        for layer in schedule.get("schedule_layers") or []:
+            users = layer.get("users") or []
+            kept = [u for u in users if _layer_user_id(u) not in user_ids]
+            if len(kept) == len(users):
+                continue
+            hit |= {_layer_user_id(u) for u in users} & set(user_ids)
+            if not kept:
+                errors.append(f"schedule {schedule.get('summary')!r} layer "
+                              f"{layer.get('name')!r} would have no users left; "
+                              f"add someone else to it first")
+            layer["users"] = kept
+        if hit:
+            planned.append({"schedule": schedule, "users": sorted(hit)})
+    return planned
+
+
+def _plan_policies(token, team_id, user_ids, errors) -> list[dict]:
+    """Escalation policies (full detail) where a listed user is a rule target, rewritten."""
+    planned = []
+    for ref in paginate("escalation_policies", token, params={"team_ids[]": [team_id]}):
+        policy = get_policy(token, ref["id"])
+        hit = set()
+        for idx, rule in enumerate(policy.get("escalation_rules") or []):
+            targets = rule.get("targets") or []
+            kept = [t for t in targets
+                    if not (is_user_target(t) and t.get("id") in user_ids)]
+            if len(kept) == len(targets):
+                continue
+            hit |= {t.get("id") for t in targets} & set(user_ids)
+            if not kept:
+                errors.append(f"escalation policy {policy.get('summary')!r} rule {idx + 1} "
+                              f"would have no targets left; add another target first")
+            rule["targets"] = kept
+        if hit:
+            planned.append({"policy": policy, "users": sorted(hit)})
+    return planned
+
+
+def _check_v3_schedules(token, user_ids, names, errors) -> None:
+    """Shift-based (v3) schedules can't be edited here: a listed user on one blocks the run,
+    and so does membership that can't be checked (fail closed)."""
+    for uid in user_ids:
+        try:
+            for ref in v3_schedule_references(token, uid):
+                errors.append(f"{names[uid]} ({uid}) is on {ref}; remove them there first")
+        except PDApiError as e:
+            if e.is_auth_error:
+                raise
+            errors.append(f"could not check v3 schedules for {names[uid]} ({uid}): {e}")
+
+
+def remove_listed_users(args, token, team_id) -> int:
+    user_ids = _parse_user_ids(args.user_ids)
+    if not user_ids:
+        return _usage("--user-ids is empty; name at least one user ID.")
+
+    names, errors = {}, []
+    for uid in user_ids:
+        try:
+            names[uid] = request(f"users/{uid}", token).get("user", {}).get("name") or uid
+        except PDApiError as e:
+            if e.is_auth_error:
+                raise
+            if e.status_code != 404:
+                raise
+            errors.append(f"user {uid} does not exist")
+    try:
+        members = {m.get("user", {}).get("id")
+                   for m in paginate(f"teams/{team_id}/members", token, items_key="members")}
+    except PDApiError as e:
+        if e.status_code == 404:
+            return _usage(f"team {team_id} does not exist.")
+        raise
+    if args.from_schedules:
+        _check_v3_schedules(token, [u for u in user_ids if u in names], names, errors)
+    schedules = (_plan_schedules(token, team_id, user_ids, errors)
+                 if args.from_schedules else [])
+    policies = (_plan_policies(token, team_id, user_ids, errors)
+                if args.from_escalation_policies else [])
+    if errors:
+        for e in errors:
+            log.error("%s", e)
+        return _usage(f"{len(errors)} problem(s) found; nothing was changed.")
+
+    leaving = [uid for uid in user_ids if uid in members]
+    for uid in user_ids:
+        if uid not in members:
+            log.info("%s (%s) is not on team %s; skipping the team removal.",
+                     names[uid], uid, team_id)
+    changes = len(schedules) + len(policies) + len(leaving)
+    if not changes:
+        log.info("Nothing to do: every listed user is already removed.")
+        return 0
+    for s in schedules:
+        print(f"{'[dry-run] would update' if args.dry_run else 'Will update'} schedule "
+              f"{s['schedule'].get('summary')!r} to remove "
+              f"{', '.join(names[u] for u in s['users'])}", file=sys.stderr)
+    for p in policies:
+        print(f"{'[dry-run] would update' if args.dry_run else 'Will update'} policy "
+              f"{p['policy'].get('summary')!r} to remove "
+              f"{', '.join(names[u] for u in p['users'])}", file=sys.stderr)
+    for uid in leaving:
+        print(f"{'[dry-run] would' if args.dry_run else 'Will'} DELETE "
+              f"/teams/{team_id}/members/{uid} for {names[uid]}", file=sys.stderr)
+    if args.dry_run:
+        return finish_bulk(changes, 0, dry_run=True, label="changes")
+    if not confirm(f"Apply {changes} change(s) to team {team_id}?", assume_yes=args.yes):
+        return 0
+
+    ok = failed = 0
+    blocked: set[str] = set()  # users whose schedule/policy removal failed stay on the team
+    for s in schedules:
+        schedule = s["schedule"]
+        try:
+            request(f"schedules/{schedule['id']}", token, method="PUT",
+                    data=schedule_body(schedule))
+            log.info("Updated schedule %r.", schedule.get("summary"))
+            ok += 1
+        except PDApiError as e:
+            if e.is_auth_error:
+                raise
+            log.error("Failed to update schedule %r: %s", schedule.get("summary"), e)
+            failed += 1
+            blocked.update(s["users"])
+    for p in policies:
+        policy = p["policy"]
+        try:
+            request(f"escalation_policies/{policy['id']}", token, method="PUT",
+                    data=policy_body(policy))
+            log.info("Updated escalation policy %r.", policy.get("summary"))
+            ok += 1
+        except PDApiError as e:
+            if e.is_auth_error:
+                raise
+            log.error("Failed to update escalation policy %r: %s", policy.get("summary"), e)
+            failed += 1
+            blocked.update(p["users"])
+    for uid in leaving:
+        if uid in blocked:
+            log.error("Kept %s on team %s: a schedule or policy update failed; re-run to finish.",
+                      names[uid], team_id)
+            failed += 1
+            continue
+        try:
+            request(f"teams/{team_id}/members/{uid}", token, method="DELETE")
+            log.info("Removed %s from team %s.", names[uid], team_id)
+            ok += 1
+        except PDApiError as e:
+            if e.is_auth_error:
+                raise
+            log.error("Failed to remove %s from team %s: %s", names[uid], team_id, e)
+            failed += 1
+    return finish_bulk(ok, failed, dry_run=False, label="changes")
+
+
+# ---------------- interactive ----------------
+
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     token = init(args)
     team_id = get_team_id(args.team_id)
     dry_run = args.dry_run
+
+    if args.user_ids is not None:
+        return remove_listed_users(args, token, team_id)
+    if args.from_schedules or args.from_escalation_policies or args.yes:
+        return _usage("--from-schedules, --from-escalation-policies and -y need --user-ids.")
 
     if not sys.stdin.isatty() and not dry_run:
         log.error("This command is interactive and needs a TTY (or use --dry-run).")

@@ -19,6 +19,5 @@ risk table of its own, so a new command cannot reach the UI without stating its 
 - Single-object deletes (`pd-alert-grouping --delete`, deleting schedule overrides) stay
   reversible: the dry run is enforced and the object can be recreated by hand. The
   Irreversible operation list in `CONTEXT.md` is the whole list.
-- `pd-remove-team-members` is declared a `--dry-run` writing command although it is
-  interactive-only until it gains `-y` (#65). #65 must land before the UI can apply writes
-  (#73).
+- `pd-remove-team-members` runs unattended only in its `--user-ids` mode (#65); the UI runs it
+  only that way, never the interactive mode.
