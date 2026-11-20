@@ -123,3 +123,7 @@ def pd_eo_export() -> None:
 
 def pd_eo_apply() -> None:
     _entry("event_orchestration", "apply_main")
+
+
+def pd_sn_sync() -> None:
+    _entry("sn_sync")

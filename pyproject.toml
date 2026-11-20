@@ -53,6 +53,7 @@ pd-bulk-extensions = "pagerduty_ops.console_scripts:pd_bulk_extensions"
 pd-alert-grouping = "pagerduty_ops.console_scripts:pd_alert_grouping"
 pd-eo-export = "pagerduty_ops.console_scripts:pd_eo_export"
 pd-eo-apply = "pagerduty_ops.console_scripts:pd_eo_apply"
+pd-sn-sync = "pagerduty_ops.console_scripts:pd_sn_sync"
 
 [tool.setuptools]
 packages = ["pagerduty_ops", "pagerduty_ops.commands"]
