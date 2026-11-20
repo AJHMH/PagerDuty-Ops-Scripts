@@ -179,3 +179,7 @@ def pd_business_services() -> None:
 
 def pd_security_config() -> None:
     _entry("security_config")
+
+
+def pd_templates() -> None:
+    _entry("templates")

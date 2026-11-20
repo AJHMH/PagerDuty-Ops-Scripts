@@ -376,6 +376,18 @@ pd-security-config apply-sessions -i security_config.json -y
 - **Validation:** `absolute_session_ttl` must be 600–18,144,000 seconds and `idle_session_ttl` 60–15,552,000 seconds, and idle can't exceed absolute.
 - **Token:** needs an Account Owner or Global Admin user token, or an account API key.
 
+### pd-templates (status-update templates: export → diff-first apply)
+```bash
+pd-templates export -o templates.json                 # commit to git so wording changes are reviewed
+pd-templates apply -i templates.json                  # diff only (no writes)
+pd-templates apply -i templates.json --apply -y
+pd-templates apply -i templates.json --apply -y --prune [--max-deletes 5]
+```
+- **The file** is keyed by template `name`, kept exactly as exported, and contains `description`, `template_type` and `templated_fields`. The templated fields are `email_subject`, `email_body` (HTML) and `message`, which is used for SMS, push and Slack.
+- **Template type:** `status_update` is the only type PagerDuty supports.
+- **Validation:** before any write, it rejects duplicate names, unknown keys or fields, other template types, templates with all fields empty, and live names that more than one template shares.
+- **Deleting** templates that aren't in the file needs `--prune` and is capped by `--max-deletes`.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only

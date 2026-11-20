@@ -16,7 +16,7 @@ COMMAND_MODULES = [
     "list_services", "list_status_pages", "list_teams", "list_users", "list_webhooks",
     "patch_role", "remove_team_members", "rename_resources", "reorg", "schedule_overrides",
     "scim_user_audit", "scim_user_sync", "security_config", "service_deps", "service_field_values",
-    "service_urgency", "sn_sync", "standards_report", "subscriptions", "team_members",
+    "service_urgency", "sn_sync", "standards_report", "subscriptions", "team_members", "templates",
     "update_team_roles", "v3_schedules", "validate",
 ]
 
