@@ -58,6 +58,7 @@ pd-sn-sync = "pagerduty_ops.console_scripts:pd_sn_sync"
 pd-validate = "pagerduty_ops.console_scripts:pd_validate"
 pd-reorg = "pagerduty_ops.console_scripts:pd_reorg"
 pd-service-deps = "pagerduty_ops.console_scripts:pd_service_deps"
+pd-schedule-overrides = "pagerduty_ops.console_scripts:pd_schedule_overrides"
 
 [tool.setuptools]
 packages = ["pagerduty_ops", "pagerduty_ops.commands"]
