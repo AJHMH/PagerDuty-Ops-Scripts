@@ -115,11 +115,13 @@ def use_utf8_streams() -> None:
 
     On Windows a piped stdout defaults to the console code page (often cp1252, which cannot
     encode many names) and turns csv's "\\r\\n" into "\\r\\r\\n". stdout is data, so it gets no
-    newline translation; stderr keeps the platform's newlines.
+    newline translation and fails loudly on unencodable data; stderr keeps the platform's
+    newlines and never fails a run over a diagnostic.
     """
-    for stream, newline in ((sys.stdout, "\n"), (sys.stderr, None)):
+    for stream, errors, newline in ((sys.stdout, "strict", "\n"),
+                                    (sys.stderr, "backslashreplace", None)):
         if hasattr(stream, "reconfigure"):
-            stream.reconfigure(encoding="utf-8", errors="backslashreplace", newline=newline)
+            stream.reconfigure(encoding="utf-8", errors=errors, newline=newline)
 
 
 def run(main_fn, argv=None) -> None:
