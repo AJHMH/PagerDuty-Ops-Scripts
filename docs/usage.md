@@ -87,7 +87,7 @@ pd-export-change-events --incident-id PT4KHLK -f json
 ```bash
 pd-scim-user-audit expected_users.csv -o scim_report.txt
 ```
-CSV columns: `email, displayName, active`.
+CSV columns: `email, displayName, active`. Validation is strict: a row without an email, an unrecognized `active` value (accepted: `true/false`, `yes/no`, `1/0`, `active/inactive`) or a duplicate email exits 2.
 
 ### pd-standards-report
 ```bash
@@ -334,6 +334,22 @@ pd-incident-workflows triggers-apply trigger_links.csv -y
 - **Trigger CSV:** `action (attach|detach), trigger_id, service_id`. The extra `workflow_name` and `trigger_type` columns from `triggers-export` are informational.
 - **Validation:** every row is checked before any write, and a row missing a `trigger_id` or `service_id` is an error rather than being skipped. Triggers subscribed to all services can't have per-service links and are rejected.
 - **Re-runs are safe:** existing links are skipped, and a detach that returns 404 counts as done.
+
+### pd-scim-user-sync (SCIM writes; **deletions can't be undone**)
+```bash
+pd-scim-user-sync plan expected_users.csv --plan-out scim_plan.json        # read-only
+pd-scim-user-sync plan expected_users.csv --plan-out scim_plan.json --delete-orphans
+pd-scim-user-sync apply scim_plan.json --dry-run
+pd-scim-user-sync apply scim_plan.json -y [--max-deletes 10]
+```
+This is the write side of `pd-scim-user-audit`, and it uses the same IdP CSV. **In PagerDuty's SCIM API, setting `active` to false deletes the user.** The command guards that:
+- **Display names:** drift is corrected with an update.
+- **Who gets deleted:** only users the IdP marks inactive. Users missing from the CSV are reported only, unless you pass `--delete-orphans`. Use that flag only with a *complete* IdP export.
+- **Blocked deletions:** a deletion is **blocked**, and never applied, for the account owner, for anyone still on a schedule (v2 layers or shift-based v3 schedules) or escalation policy, when v3 schedule membership can't be checked (fail closed), or when a SCIM user doesn't match exactly one PagerDuty user by email. SCIM IDs aren't PagerDuty IDs, so users are matched by email. Clear rotations first, for example with `pd-remove-team-members`, then re-plan.
+- **Live re-check:** `apply` re-checks each item before writing and skips items that changed or became blocked, exiting 1.
+- **Plan age and cap:** `apply` refuses plans older than 24 hours (`--max-plan-age-hours`), and caps deletions at `--max-deletes` (default 10).
+- **Missing users:** users missing from PagerDuty are reported, not created; provisioning belongs to the IdP.
+- **Token:** needs SCIM enabled with `users.write`.
 
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash

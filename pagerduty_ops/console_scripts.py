@@ -167,3 +167,7 @@ def pd_event_rules_migrate() -> None:
 
 def pd_incident_workflows() -> None:
     _entry("incident_workflows")
+
+
+def pd_scim_user_sync() -> None:
+    _entry("scim_user_sync")
