@@ -330,9 +330,9 @@ pd-incident-workflows triggers-export -o trigger_links.csv
 pd-incident-workflows triggers-apply trigger_links.csv --dry-run
 pd-incident-workflows triggers-apply trigger_links.csv -y
 ```
-- **`export` and `diff`:** each workflow is written with its steps and triggers. Fields the server changes on its own (`updated_at`, `self` and similar) are left out, so `diff` only reports real changes. This tool doesn't write workflow definitions back; edit them in the PagerDuty UI.
+- **`export` and `diff`:** each workflow is written with its steps and triggers. Fields the server changes on its own (`updated_at`, `self` and similar) are left out, so `diff` only reports real changes. Re-exporting removes this tool's own earlier files for workflows that were renamed or deleted, so the directory always matches PagerDuty. Other files are left alone. This tool doesn't write workflow definitions back; edit them in the PagerDuty UI.
 - **Trigger CSV:** `action (attach|detach), trigger_id, service_id`. The extra `workflow_name` and `trigger_type` columns from `triggers-export` are informational.
-- **Validation:** every row is checked before any write. Triggers subscribed to all services can't have per-service links and are rejected.
+- **Validation:** every row is checked before any write, and a row missing a `trigger_id` or `service_id` is an error rather than being skipped. Triggers subscribed to all services can't have per-service links and are rejected.
 - **Re-runs are safe:** existing links are skipped, and a detach that returns 404 counts as done.
 
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)

@@ -107,6 +107,18 @@ def document(workflow, triggers) -> dict:
             "triggers": sorted(mine, key=lambda t: t.get("id") or "")}
 
 
+EXPORT_NAME_RE = re.compile(r"^[A-Za-z0-9]+__[a-z0-9-]+\.json$")
+
+
+def _workflow_id(path):
+    """Workflow ID inside an export file written by this tool, else None."""
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)["workflow"]["id"]
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
 def slugify(name) -> str:
     return re.sub(r"[^A-Za-z0-9]+", "-", name or "").strip("-").lower() or "unnamed"
 
@@ -117,12 +129,24 @@ def export_main(args) -> int:
     token = init(args)
     workflows, triggers = list_workflows(token), list_triggers(token)
     os.makedirs(args.output_dir, exist_ok=True)
+    written = set()
     for wf in workflows:
-        path = os.path.join(args.output_dir, f"{wf['id']}__{slugify(wf.get('name'))}.json")
+        name = f"{wf['id']}__{slugify(wf.get('name'))}.json"
+        path = os.path.join(args.output_dir, name)
         with open(path, "w", encoding="utf-8") as f:
             json.dump(document(wf, triggers), f, indent=2, sort_keys=True)
             f.write("\n")
+        written.add(name)
         log.info("Wrote %s", path)
+    # Remove our own earlier exports that no longer match a live workflow (renamed or
+    # deleted), so the directory is an exact snapshot. Other files are never touched.
+    for name in sorted(os.listdir(args.output_dir)):
+        if name in written or not EXPORT_NAME_RE.match(name):
+            continue
+        path = os.path.join(args.output_dir, name)
+        if _workflow_id(path) is not None:
+            os.remove(path)
+            log.info("Removed stale export %s", path)
     log.info("Exported %d workflows (%d triggers) to %s/", len(workflows), len(triggers),
              args.output_dir)
     return EXIT_OK
@@ -145,7 +169,12 @@ def diff_main(args) -> int:
         try:
             with open(path, encoding="utf-8") as f:
                 doc = json.load(f)
-            files[doc["workflow"]["id"]] = (name, doc)
+            wid = doc["workflow"]["id"]
+            if wid in files:
+                print(f"Error: {name} and {files[wid][0]} both contain workflow {wid}; "
+                      "re-run export to refresh the directory.", file=sys.stderr)
+                return EXIT_USAGE
+            files[wid] = (name, doc)
         except (OSError, ValueError, KeyError, TypeError) as e:
             print(f"Error: {path}: not a workflow export ({e})", file=sys.stderr)
             return EXIT_USAGE
@@ -195,15 +224,18 @@ def triggers_export_main(args) -> int:
 
 def triggers_apply_main(args) -> int:
     token = init(args)
-    rows = load_csv_rows(args.csv_file, {"action", "trigger_id", "service_id"},
-                         skip_if_missing=("trigger_id", "service_id"))
+    # No skip_if_missing: an incomplete row is a validation error, never silently dropped.
+    rows = load_csv_rows(args.csv_file, {"action", "trigger_id", "service_id"})
     triggers = {t["id"]: t for t in list_triggers(token)}
     services = {s["id"] for s in paginate("services", token)}
     errors, wanted = [], {a: set() for a in ACTIONS}
     for r in rows:
         where = f"line {r['_line']}"
         action, tid, sid = r["action"].lower(), r["trigger_id"], r["service_id"]
-        if action not in ACTIONS:
+        missing = [c for c, v in (("trigger_id", tid), ("service_id", sid)) if not v]
+        if missing:
+            errors.append(f"{where}: missing {', '.join(missing)}")
+        elif action not in ACTIONS:
             errors.append(f"{where}: action must be attach or detach")
         elif tid not in triggers:
             errors.append(f"{where}: unknown trigger {tid}")

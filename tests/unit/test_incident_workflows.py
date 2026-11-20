@@ -101,3 +101,37 @@ def test_triggers_apply_idempotent_attach_and_detach(tmp_path):
     assert iw.main(["triggers-apply", str(p), "--dry-run"]) == 0
     assert iw.main(["triggers-apply", str(p), "-y"]) == 0
     assert [c.request.method for c in responses.calls].count("DELETE") == 1
+
+
+@responses.activate
+def test_reexport_after_rename_removes_stale_file_and_diff_is_clean(tmp_path):
+    mock(workflow(name="Zulu"))
+    assert iw.main(["export", "-o", str(tmp_path)]) == 0
+    (tmp_path / "notes.json").write_text("{}")                  # not ours: kept
+    responses.reset()
+    mock(workflow(name="Alpha"))
+    assert iw.main(["export", "-o", str(tmp_path)]) == 0
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["W1__alpha.json", "notes.json"]
+    (tmp_path / "notes.json").unlink()
+    assert iw.main(["diff", "-i", str(tmp_path), "--fail-on-drift"]) == 0
+
+
+@responses.activate
+def test_diff_rejects_duplicate_workflow_ids(tmp_path):
+    mock()
+    assert iw.main(["export", "-o", str(tmp_path)]) == 0
+    (path,) = tmp_path.glob("*.json")
+    (tmp_path / "W1__old-name.json").write_text(path.read_text())
+    assert iw.main(["diff", "-i", str(tmp_path)]) == 2
+
+
+@responses.activate
+def test_triggers_apply_rejects_incomplete_rows_before_writing(tmp_path):
+    mock()
+    responses.get(f"{PD_API_BASE}/services", json={"services": [{"id": "PS1"}, {"id": "PS2"}],
+                                                   "more": False})
+    responses.post(f"{TRIG}/T1/services", json={"trigger": {}})
+    p = tmp_path / "t.csv"
+    p.write_text(HDR + "attach,T1,PS2\ndetach,T1,\n")
+    assert iw.main(["triggers-apply", str(p), "-y"]) == 2
+    assert all(c.request.method == "GET" for c in responses.calls)
