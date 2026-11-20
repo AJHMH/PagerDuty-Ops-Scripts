@@ -84,9 +84,15 @@ def apply_name_affix_update(
     return finish_bulk(updated, failed, dry_run=dry_run, label=resource)
 
 
-def load_csv_rows(path: str, required_columns: set[str], *, skip_if_missing=()) -> list[dict]:
-    """Load and validate a CSV. Exits 2 on missing columns; skips rows missing
-    any column named in `skip_if_missing`. Adds '_line' for error reporting."""
+def load_csv_rows(path: str, required_columns: set[str], *, require_values=()) -> list[dict]:
+    """Load and validate a CSV. Adds '_line' for error reporting.
+
+    Exits 2 if a required column is missing from the header, or if any row that is not
+    completely blank lacks a value in a column named in `require_values`; every such
+    line is reported. Rows are never silently dropped, so a bulk run can't apply the
+    valid rows and report success while ignoring a malformed one. Completely blank rows
+    (e.g. a trailing ",,," from a spreadsheet export) are skipped.
+    """
     try:
         f = open(path, newline="", encoding="utf-8")
     except OSError as e:
@@ -98,11 +104,20 @@ def load_csv_rows(path: str, required_columns: set[str], *, skip_if_missing=()) 
         if missing:
             print(f"Error: CSV missing required columns: {sorted(missing)}", file=sys.stderr)
             raise SystemExit(2)
-        rows = []
+        rows, problems = [], []
         for line_no, row in enumerate(reader, start=2):
-            if any(not (row.get(c) or "").strip() for c in skip_if_missing):
+            clean = {k: (v or "").strip() for k, v in row.items() if k is not None}
+            if not any(clean.values()):
+                continue  # completely blank row
+            empty = [c for c in require_values if not clean.get(c)]
+            if empty:
+                problems.append(f"line {line_no}: missing {', '.join(empty)}")
                 continue
-            rows.append({**{k: (v or "").strip() for k, v in row.items()}, "_line": line_no})
+            rows.append({**clean, "_line": line_no})
+        if problems:
+            for p in problems:
+                print(f"Error: {path}: {p}", file=sys.stderr)
+            raise SystemExit(2)
         return rows
 
 

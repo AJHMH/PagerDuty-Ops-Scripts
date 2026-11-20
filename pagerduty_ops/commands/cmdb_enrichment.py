@@ -363,7 +363,7 @@ def records_upload_main(args) -> int:
 
 def associations_main(args) -> int:
     token = init(args)
-    rows = load_csv_rows(args.csv_file, {"action", "type", "id"}, skip_if_missing=("id",))
+    rows = load_csv_rows(args.csv_file, {"action", "type", "id"}, require_values=("id",))
     want = {"add": set(), "remove": set()}
     bad = []
     for r in rows:

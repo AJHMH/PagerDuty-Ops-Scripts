@@ -71,7 +71,7 @@ def attach(token, args) -> int:
         print("Error: --attach requires --services-csv.", file=sys.stderr)
         raise SystemExit(2)
     setting = find_setting(token, args.attach)
-    rows = load_csv_rows(args.services_csv, {"service_id"}, skip_if_missing=("service_id",))
+    rows = load_csv_rows(args.services_csv, {"service_id"}, require_values=("service_id",))
     new_ids = [r["service_id"] for r in rows if r.get("service_id")]
     existing_ids = {ref["id"] for ref in _service_refs(setting)}
     to_add = [sid for sid in new_ids if sid not in existing_ids]

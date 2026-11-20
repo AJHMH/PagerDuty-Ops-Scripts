@@ -99,7 +99,7 @@ def export_main(args) -> int:
 
 
 def load_rows(path) -> list[tuple]:
-    rows = load_csv_rows(path, set(COLUMNS), skip_if_missing=("supporting_id", "dependent_id"))
+    rows = load_csv_rows(path, set(COLUMNS), require_values=("supporting_id", "dependent_id"))
     out, bad = [], []
     for r in rows:
         action = r["action"].lower()

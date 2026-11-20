@@ -44,7 +44,7 @@ See [docs/architecture.md](docs/architecture.md) for details.
 ## Write-safety rules (every command that changes data)
 
 - `--dry-run` previews every change and writes nothing. `-y/--yes` skips the prompt, and writes are refused on a non-interactive stdin without it.
-- Validate all input (CSV columns, enums, ISO 8601 timestamps with a timezone, `https://` URLs) **before** the first write. Bad input exits 2.
+- Validate all input (CSV columns, enums, ISO 8601 timestamps with a timezone, `https://` URLs) **before** the first write. Bad input exits 2. Never silently skip a CSV row: `load_csv_rows(require_values=...)` rejects incomplete rows and only ignores completely blank ones.
 - Be idempotent: read the current state first and skip changes that are already in place, so a re-run after a partial failure is safe.
 - Abort the run on authentication errors. Count other failures and finish with `finish_bulk()` so a partial failure exits 1.
 - Configuration-heavy resources use export, then a diff-first apply. Deletions happen only behind an explicit `--prune`.

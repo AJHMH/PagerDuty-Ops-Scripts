@@ -73,7 +73,7 @@ def _resolve_user(row, prefix, resolver, errors):
 
 
 def load_rows(path, token, v3: bool) -> list[dict]:
-    rows = load_csv_rows(path, REQUIRED, skip_if_missing=("schedule_id",))
+    rows = load_csv_rows(path, REQUIRED, require_values=("schedule_id",))
     resolver, errors, out = UserResolver(token), [], []
     for r in rows:
         action = r["action"].lower()

@@ -45,7 +45,7 @@ def load_and_validate(path) -> list[dict]:
     rows = load_csv_rows(
         path,
         {"service_id", "start_time", "end_time", "description"},
-        skip_if_missing=("service_id",),
+        require_values=("service_id",),
     )
     for row in rows:
         start = parse_iso8601(row["start_time"], field="start_time", line=row["_line"])

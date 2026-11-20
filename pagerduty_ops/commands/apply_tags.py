@@ -33,19 +33,24 @@ def load_rows(path) -> list[dict]:
     rows = load_csv_rows(
         path,
         {"entity_type", "entity_id", "tag_label", "action"},
-        skip_if_missing=("entity_id", "tag_label"),
+        require_values=("entity_id", "tag_label"),
     )
-    valid = []
+    valid, errors = [], []
     for row in rows:
         entity_type = row["entity_type"]
         action = row["action"].lower()
         if entity_type not in VALID_ENTITY_TYPES:
-            log.warning("line %d: skipping unknown entity_type %r", row["_line"], entity_type)
+            errors.append(f"line {row['_line']}: unknown entity_type {entity_type!r} "
+                          f"(expected one of {sorted(VALID_ENTITY_TYPES)})")
             continue
         if action not in VALID_ACTIONS:
-            log.warning("line %d: skipping unknown action %r", row["_line"], action)
+            errors.append(f"line {row['_line']}: unknown action {action!r} (expected add|remove)")
             continue
         valid.append({**row, "action": action})
+    if errors:
+        for e in errors:
+            print(f"Error: {e}", file=sys.stderr)
+        raise SystemExit(2)
     return valid
 
 

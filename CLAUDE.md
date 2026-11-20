@@ -41,7 +41,8 @@ history scan. Run the unit suite and ruff before every commit.
 - `--dry-run` previews every change and performs zero writes; `-y/--yes` skips the prompt.
 - Writes go through `cli.confirm()`, which refuses on a non-interactive stdin without `-y`.
 - Validate all input (CSV columns, enums, ISO 8601 with timezone, https URLs) **before** the
-  first write; bad input exits 2.
+  first write; bad input exits 2. Never silently drop a CSV row: use
+  `load_csv_rows(require_values=...)`, which rejects incomplete rows (blank rows are ignored).
 - Idempotent: read current state first and skip no-ops, so re-runs after partial failure are safe.
 - Re-raise `PDApiError` when `is_auth_error` (abort the run); count other failures and finish
   with `finish_bulk()` so partial failure exits 1.

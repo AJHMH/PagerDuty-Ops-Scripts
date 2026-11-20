@@ -238,7 +238,7 @@ def same_value(a, b, defn) -> bool:
 
 def load_desired(path, defs, known_services, clear_empty) -> dict:
     """{service_id: {field_name: value}} after validating every cell (exit 2 on errors)."""
-    rows = load_csv_rows(path, {"service_id"}, skip_if_missing=("service_id",))
+    rows = load_csv_rows(path, {"service_id"}, require_values=("service_id",))
     columns = [c for c in (rows[0].keys() if rows else []) if c not in (*FIXED_COLUMNS, "_line")]
     errors = [f"unknown field column {c!r}" for c in columns if c not in defs]
     desired, seen = {}, set()
