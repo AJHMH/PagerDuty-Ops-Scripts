@@ -76,3 +76,17 @@ history scan. Run the unit suite and ruff before every commit.
 - One branch per feature (`feature/<topic>`), one PR per branch into `main`.
 - Branch from up-to-date `main`; if a feature depends on an unmerged one, stack it on that
   branch and say so in the PR description.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specs live in GitHub Issues on AJHMH/PagerDuty-Ops-Scripts. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The five default labels: needs-triage, needs-info, ready-for-agent, ready-for-human, wontfix. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
