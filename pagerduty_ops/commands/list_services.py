@@ -93,5 +93,6 @@ def main(argv=None) -> int:
         label="services",
     )
     rows = [service_row(s) for s in services]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=services), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=services),
+                  args.output, fmt=args.format)
     return 0

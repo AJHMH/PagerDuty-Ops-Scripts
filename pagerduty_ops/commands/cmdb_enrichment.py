@@ -331,7 +331,7 @@ def records_upload_main(args) -> int:
     token = init(args)
     try:
         size = os.path.getsize(args.csv_file)
-        with open(args.csv_file, encoding="utf-8", newline="") as f:
+        with open(args.csv_file, encoding="utf-8-sig", newline="") as f:  # strip any BOM
             content = f.read()
     except (OSError, UnicodeDecodeError) as e:
         print(f"Error: cannot read {args.csv_file}: {e}", file=sys.stderr)

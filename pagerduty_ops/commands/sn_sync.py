@@ -395,7 +395,7 @@ def report_main(args) -> int:
     (rows, _items), _sn = _analyze_from_args(args)
     issues = [r for r in rows if r["status"] != "ok"]
     shown = rows if args.all else issues
-    write_payload(render_rows(shown, REPORT_FIELDS, args.format), args.output)
+    write_payload(render_rows(shown, REPORT_FIELDS, args.format), args.output, fmt=args.format)
     counts = defaultdict(int)
     for r in rows:
         counts[r["status"]] += 1

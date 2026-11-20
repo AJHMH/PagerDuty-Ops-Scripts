@@ -60,5 +60,6 @@ def main(argv=None) -> int:
     schedules = list(paginate(V3_RESOURCE, token, extra_headers=EARLY_ACCESS_HEADERS))
     log.info("Found %d v3 schedules.", len(schedules))
     rows = [schedule_row(s) for s in schedules]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=schedules), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=schedules),
+                  args.output, fmt=args.format)
     return 0

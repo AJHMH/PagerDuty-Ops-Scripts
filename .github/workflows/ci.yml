@@ -38,6 +38,17 @@ jobs:
         if: env.PD_TEST_TOKEN != ''
         run: python -m pytest tests/integration -v
 
+  test-windows:
+    # The UI service runs on a Windows Server VM (ADR 0005): prove the engine there too.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install -e ".[dev]"
+      - run: python -m pytest tests/unit -v
+
   security:
     runs-on: ubuntu-latest
     steps:

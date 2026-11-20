@@ -125,7 +125,7 @@ ruff check .                            # lint
 PD_TEST_TOKEN=... python -m pytest tests/integration -v   # opt-in, read-only
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, the unit suite on Python 3.10/3.12, `pip-audit`, and a gitleaks history scan on every push/PR. Releases are tag-driven (`v*.*.*` → `release.yml` builds and publishes artifacts).
+CI (`.github/workflows/ci.yml`) runs lint, the unit suite on Python 3.10/3.12 (Linux) and 3.12 (Windows), `pip-audit`, and a gitleaks history scan on every push/PR. Releases are tag-driven (`v*.*.*` → `release.yml` builds and publishes artifacts).
 
 One branch per feature; one PR per branch into `main` (see [CONTRIBUTING.md](CONTRIBUTING.md)).
 

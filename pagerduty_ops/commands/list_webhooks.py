@@ -113,5 +113,6 @@ def main(argv=None) -> int:
             if needle in (w.get("description") or "").lower()
         ]
     rows = [webhook_row(w) for w in webhooks]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=webhooks), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=webhooks),
+                  args.output, fmt=args.format)
     return 0

@@ -43,5 +43,5 @@ def main(argv=None) -> int:
             or needle in (t.get("description") or "").lower()
         ]
     rows = [team_row(t) for t in teams]
-    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format), args.output, fmt=args.format)
     return 0

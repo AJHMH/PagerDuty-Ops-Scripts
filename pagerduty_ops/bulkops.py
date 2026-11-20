@@ -95,7 +95,8 @@ def load_csv_rows(path: str, required_columns: set[str], *, require_values=()) -
     are skipped.
     """
     try:
-        f = open(path, newline="", encoding="utf-8")
+        # utf-8-sig: Excel "CSV UTF-8" files and our own CSV exports start with a BOM.
+        f = open(path, newline="", encoding="utf-8-sig")
     except OSError as e:
         print(f"Error: cannot read CSV {path}: {e}", file=sys.stderr)
         raise SystemExit(2) from e

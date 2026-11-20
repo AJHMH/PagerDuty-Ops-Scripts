@@ -145,3 +145,11 @@ def test_load_csv_rows_rejects_surplus_cells(tmp_path, capsys):
                       require_values=("entity_id",))
     assert exc.value.code == 2
     assert "line 3: 1 more cell(s) than the header" in capsys.readouterr().err
+
+
+def test_load_csv_rows_accepts_excel_csv_utf8_with_bom(tmp_path):
+    # Excel's "CSV UTF-8" save starts the file with a BOM; the first column must still match.
+    p = tmp_path / "excel.csv"
+    p.write_bytes("\ufeffservice_id,name\r\nP1,José\r\n".encode("utf-8"))
+    rows = load_csv_rows(str(p), {"service_id"}, require_values=("service_id",))
+    assert [(r["service_id"], r["name"]) for r in rows] == [("P1", "José")]

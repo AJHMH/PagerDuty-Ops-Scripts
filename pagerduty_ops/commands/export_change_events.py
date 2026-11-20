@@ -78,5 +78,6 @@ def main(argv=None) -> int:
                            items_key=items_key))
     log.info("Got %d change events.", len(events))
     rows = [flatten(ce) for ce in events]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=events), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=events),
+                  args.output, fmt=args.format)
     return 0

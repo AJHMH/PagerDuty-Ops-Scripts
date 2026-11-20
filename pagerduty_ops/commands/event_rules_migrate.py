@@ -133,7 +133,7 @@ def load_states(token, service_ids=None) -> tuple[list[dict], int]:
 def inventory_main(args) -> int:
     token = init(args)
     states, failed = load_states(token)
-    write_payload(render_rows(states, FIELDS, args.format), args.output)
+    write_payload(render_rows(states, FIELDS, args.format), args.output, fmt=args.format)
     counts: dict[str, int] = {}
     for s in states:
         counts[s["state"]] = counts.get(s["state"], 0) + 1

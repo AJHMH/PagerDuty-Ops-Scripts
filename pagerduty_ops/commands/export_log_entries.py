@@ -86,5 +86,6 @@ def main(argv=None) -> int:
     entries = list(paginate(resource, token, params=build_params(args) or None))
     log.info("Got %d log entries.", len(entries))
     rows = [flatten(le) for le in entries]
-    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=entries), args.output)
+    write_payload(render_rows(rows, FIELDNAMES, args.format, raw=entries),
+                  args.output, fmt=args.format)
     return 0

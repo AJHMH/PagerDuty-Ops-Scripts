@@ -100,7 +100,7 @@ def export_main(args) -> int:
                   "written.", failed)
         return EXIT_FAILURES
     rows = [dict(zip(COLUMNS, ("associate", *rel), strict=True)) for rel in sorted(seen)]
-    write_payload(render_rows(rows, COLUMNS, args.format), args.output)
+    write_payload(render_rows(rows, COLUMNS, args.format), args.output, fmt=args.format)
     log.info("Exported %d dependencies.", len(rows))
     return EXIT_OK
 
