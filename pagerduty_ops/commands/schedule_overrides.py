@@ -5,8 +5,8 @@ CSV columns:
   schedule_id     PagerDuty schedule ID
   user_id | user_email     the overriding (on-call) user — give exactly one
   start, end      ISO 8601 with timezone
-  --v3 only: overridden_user_id | overridden_user_email (who is replaced),
-             optional rotation_id or custom_shift_id
+  --v3 only: overridden_user_id | overridden_user_email (who is replaced), and
+             exactly one of rotation_id / custom_shift_id
 
 Emails are matched exactly (case-insensitive) against PagerDuty users; a row whose
 email matches zero or several users fails validation before any write.
@@ -87,8 +87,9 @@ def load_rows(path, token, v3: bool) -> list[dict]:
             continue
         user = _resolve_user(r, "", resolver, errors)
         replaced = _resolve_user(r, "overridden_", resolver, errors) if v3 else None
-        if v3 and r.get("rotation_id") and r.get("custom_shift_id"):
-            errors.append(f"line {r['_line']}: rotation_id and custom_shift_id are exclusive")
+        if v3 and bool(r.get("rotation_id")) == bool(r.get("custom_shift_id")):
+            errors.append(f"line {r['_line']}: --v3 rows need exactly one of rotation_id / "
+                          "custom_shift_id")
         out.append({"line": r["_line"], "action": action, "schedule_id": r["schedule_id"],
                     "user_id": user, "overridden_user_id": replaced, "start": start, "end": end,
                     "rotation_id": r.get("rotation_id", ""),
@@ -105,22 +106,35 @@ def _parse(ts):
 
 
 def existing_overrides(token, schedule_id, since, until, v3) -> list[dict]:
-    """Normalized [{id, user_id, start, end}] in the window."""
-    params = {"since": _iso(since), "until": _iso(until)}
+    """Normalized overrides in the window, with their full (unclipped) boundaries.
+
+    overflow=true returns real start/end instead of window-clipped ones; v2 needs
+    editable=true for override IDs to be included at all.
+    """
+    params = {"since": _iso(since), "until": _iso(until), "overflow": "true"}
     if v3:
         body = request(f"v3/schedules/{schedule_id}/overrides", token, params=params)
         return [{"id": o.get("id"), "user_id": (o.get("overriding_member") or {}).get("user_id"),
+                 "overridden_user_id": (o.get("overridden_member") or {}).get("user_id"),
+                 "rotation_id": o.get("rotation_id") or "",
+                 "custom_shift_id": o.get("custom_shift_id") or "",
                  "start": _parse(o["start_time"]), "end": _parse(o["end_time"])}
                 for o in body.get("overrides") or [] if o.get("start_time")]
-    body = request(f"schedules/{schedule_id}/overrides", token, params=params)
+    body = request(f"schedules/{schedule_id}/overrides", token,
+                   params={**params, "editable": "true"})
     return [{"id": o.get("id"), "user_id": (o.get("user") or {}).get("id"),
              "start": _parse(o["start"]), "end": _parse(o["end"])}
             for o in body.get("overrides") or [] if o.get("start")]
 
 
-def _match(existing, row):
+V3_KEYS = ("overridden_user_id", "rotation_id", "custom_shift_id")
+
+
+def _match(existing, row, v3=False):
+    """Same overriding user and exact boundaries; for v3 also the same source and member."""
     return [o for o in existing if o["user_id"] == row["user_id"]
-            and o["start"] == row["start"] and o["end"] == row["end"]]
+            and o["start"] == row["start"] and o["end"] == row["end"]
+            and (not v3 or all((o.get(k) or "") == (row.get(k) or "") for k in V3_KEYS))]
 
 
 def _create_body(rows, v3):
@@ -163,10 +177,15 @@ def main(argv=None) -> int:
             print(f"Error: cannot read overrides for schedule {sid}: {e}", file=sys.stderr)
             return EXIT_USAGE
         for r in srows:
-            found = _match(existing, r)
+            found = _match(existing, r, args.v3)
             if r["action"] == "create" and not found:
                 creates[sid].append(r)
             elif r["action"] == "delete" and found:
+                missing_id = [o for o in found if not o.get("id")]
+                if missing_id:
+                    print(f"Error: line {r['line']}: PagerDuty returned the matching override "
+                          "without an ID, so it cannot be deleted safely.", file=sys.stderr)
+                    return EXIT_USAGE
                 deletes.extend((sid, o["id"], r) for o in found)
             else:
                 skipped += 1

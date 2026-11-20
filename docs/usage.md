@@ -236,7 +236,7 @@ pd-schedule-overrides v3_coverage.csv --v3 -y          # shift-based (v3) schedu
 CSV: `action (create|delete), schedule_id, user_id | user_email, start, end` (ISO 8601 **with timezone**).
 - **Emails** are matched exactly, ignoring case. A row whose email matches zero or several users fails validation, and nothing is written.
 - **Re-runs are safe:** identical existing overrides are skipped on create, and missing ones on delete.
-- **v3 (`--v3`)** also needs `overridden_user_id | overridden_user_email`, the person being replaced, plus an optional `rotation_id` or `custom_shift_id`.
+- **v3 (`--v3`)** also needs `overridden_user_id | overridden_user_email`, the person being replaced, plus exactly one of `rotation_id` or `custom_shift_id`.
 
 ```csv
 action,schedule_id,user_id,user_email,start,end

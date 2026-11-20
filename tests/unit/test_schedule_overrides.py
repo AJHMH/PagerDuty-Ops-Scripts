@@ -96,3 +96,48 @@ def test_v3_requires_overridden_user(tmp_path):
     with pytest.raises(SystemExit):
         so.load_rows(csv(tmp_path, "create,PS3,PU2,,2026-12-24T00:00:00Z,"
                                    "2026-12-25T00:00:00Z\n"), "t", v3=True)
+
+
+@responses.activate
+def test_v2_get_requests_editable_and_overflow(tmp_path):
+    path = csv(tmp_path, "delete,PS1,PU1,,2026-12-25T00:00:00Z,2026-12-26T00:00:00Z\n")
+    responses.get(f"{PD_API_BASE}/schedules/PS1/overrides", json={"overrides": [
+        {"id": "PO1", "start": "2026-12-24T00:00:00Z", "end": "2026-12-27T00:00:00Z",
+         "user": {"id": "PU1"}}]})   # longer override: must NOT match the shorter row
+    assert so.main([path, "-y"]) == 0
+    get = responses.calls[0].request.url
+    assert "editable=true" in get and "overflow=true" in get
+    assert not [c for c in responses.calls if c.request.method == "DELETE"]
+
+
+@responses.activate
+def test_delete_refuses_override_without_id(tmp_path):
+    path = csv(tmp_path, "delete,PS1,PU1,,2026-12-24T00:00:00Z,2026-12-25T00:00:00Z\n")
+    responses.get(f"{PD_API_BASE}/schedules/PS1/overrides", json={"overrides": [
+        {"start": "2026-12-24T00:00:00Z", "end": "2026-12-25T00:00:00Z", "user": {"id": "PU1"}}]})
+    assert so.main([path, "-y"]) == 2
+    assert not [c for c in responses.calls if c.request.method == "DELETE"]
+
+
+V3_HDR = "action,schedule_id,user_id,user_email,overridden_user_id,rotation_id,start,end\n"
+
+
+@responses.activate
+def test_v3_match_includes_source_and_replaced_member(tmp_path):
+    path = csv(tmp_path, "create,PS3,PU2,,PU1,ROT2,2026-12-24T00:00:00Z,2026-12-25T00:00:00Z\n",
+               V3_HDR)
+    responses.get(f"{PD_API_BASE}/v3/schedules/PS3/overrides", json={"overrides": [
+        {"id": "O1", "rotation_id": "ROT1", "start_time": "2026-12-24T00:00:00Z",
+         "end_time": "2026-12-25T00:00:00Z",
+         "overridden_member": {"type": "user_member", "user_id": "PU1"},
+         "overriding_member": {"type": "user_member", "user_id": "PU2"}}]})
+    responses.post(f"{PD_API_BASE}/v3/schedules/PS3/overrides", status=201, json={})
+    assert so.main([path, "--v3", "-y"]) == 0   # different rotation: still created
+    assert [c.request.method for c in responses.calls].count("POST") == 1
+
+
+def test_v3_requires_exactly_one_source(tmp_path):
+    hdr = "action,schedule_id,user_id,user_email,overridden_user_id,start,end\n"
+    with pytest.raises(SystemExit):
+        so.load_rows(csv(tmp_path, "create,PS3,PU2,,PU1,2026-12-24T00:00:00Z,"
+                                   "2026-12-25T00:00:00Z\n", hdr), "t", v3=True)
