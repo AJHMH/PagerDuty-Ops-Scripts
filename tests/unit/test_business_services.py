@@ -109,3 +109,14 @@ def test_ambiguous_live_names_and_apply_requires_yes(tmp_path):
     path = write(tmp_path, [{"name": "Water Billing"}])
     assert bsvc.main(["apply", "-i", path]) == 2
     assert bsvc.main(["apply", "-i", path, "--apply"]) == 2
+
+
+@responses.activate
+def test_names_with_surrounding_whitespace_round_trip_without_writes(tmp_path):
+    mock([{"id": "B1", "name": "Billing ", "description": "", "point_of_contact": "",
+           "team": None}])
+    out = tmp_path / "bs.json"
+    assert bsvc.main(["export", "-o", str(out)]) == 0
+    assert json.loads(out.read_text())["business_services"][0]["name"] == "Billing "
+    assert bsvc.main(["apply", "-i", str(out), "--apply", "-y", "--prune"]) == 0
+    assert all(c.request.method == "GET" for c in responses.calls)   # no create, no delete

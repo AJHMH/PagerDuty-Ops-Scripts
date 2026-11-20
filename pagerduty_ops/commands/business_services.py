@@ -91,7 +91,9 @@ def load_desired(path, teams) -> list[dict]:
         if not isinstance(b, dict) or not str(b.get("name") or "").strip():
             errors.append(f"entry {n}: 'name' is required")
             continue
-        name = b["name"].strip()
+        # Keep the name exactly as exported: live names are matched unstripped, so
+        # stripping here would turn an untouched export into create + (with --prune) delete.
+        name = str(b["name"])
         if name.lower() in seen:
             errors.append(f"{name!r}: duplicate name")
             continue
