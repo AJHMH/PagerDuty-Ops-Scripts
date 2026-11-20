@@ -143,3 +143,7 @@ def pd_service_deps() -> None:
 
 def pd_schedule_overrides() -> None:
     _entry("schedule_overrides")
+
+
+def pd_subscriptions() -> None:
+    _entry("subscriptions")

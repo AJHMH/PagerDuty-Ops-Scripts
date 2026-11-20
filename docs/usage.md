@@ -243,6 +243,15 @@ action,schedule_id,user_id,user_email,start,end
 create,PSCHED1,,jane.doe@dallas.gov,2026-12-24T17:00:00-06:00,2026-12-26T08:00:00-06:00
 ```
 
+### pd-subscriptions (idempotent)
+```bash
+pd-subscriptions list -o subs.csv                    # via business services (default)
+pd-subscriptions list --by team -f json
+pd-subscriptions apply subs.csv --dry-run
+pd-subscriptions apply subs.csv -y
+```
+CSV: `action (subscribe|unsubscribe), subscriber_kind (user|team), subscriber_id, subscribable_kind (business_service|incident), subscribable_id`. PagerDuty supports notification subscriptions only to business services and incidents. Existing subscriptions are read first, and changes are grouped into one call per subscriber.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only
