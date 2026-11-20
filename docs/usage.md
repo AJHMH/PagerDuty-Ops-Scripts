@@ -295,6 +295,33 @@ The CSV is wide, with `service_id, service_name` followed by one column per fiel
 - **Empty cells** leave the value unchanged unless you pass `--clear-empty`.
 - **Field definitions** are managed separately with `pd-custom-fields`.
 
+### pd-event-rules-migrate (Event Rules to Event Orchestration)
+```bash
+pd-event-rules-migrate inventory -f csv -o migration.csv          # read-only
+pd-event-rules-migrate inventory --fail-on-unmigrated -q           # cron: exit 1 while any remain
+pd-event-rules-migrate convert --service-ids PSVC1,PSVC2 --dry-run
+pd-event-rules-migrate convert --service-ids PSVC1,PSVC2 -y        # IRREVERSIBLE
+pd-event-rules-migrate activate --service-ids PSVC1,PSVC2 -y
+pd-event-rules-migrate deactivate --service-ids PSVC1 -y           # roll back evaluation
+```
+The migration has two steps, because PagerDuty separates them:
+1. **`convert`** creates equivalent Event Orchestration rules and makes the service's Event Rules **read-only**. It **can't be undone**, and it doesn't change how events are processed.
+2. **`activate`** switches new events to the Service Orchestration. `deactivate` reverses it at any time.
+
+`inventory` reports each service's state: `needs_convert`, `needs_activate`, `migrated` or `no_event_rules`.
+
+**Safety guards:**
+- Every change needs `--service-ids` or an explicit `--all`, and is capped by `--max-services` (default 10).
+- `activate` refuses services that still have Event Rules that haven't been converted, because those rules would silently stop applying.
+- Nothing is changed if any service's state can't be read.
+
+Suggested rollout:
+1. Convert and activate one low-risk service.
+2. Send a test event and check the result.
+3. Repeat in small batches.
+
+PagerDuty has announced Event Rules end-of-life.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only

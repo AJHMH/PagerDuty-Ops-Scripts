@@ -159,3 +159,7 @@ def pd_cmdb_enrichment() -> None:
 
 def pd_service_field_values() -> None:
     _entry("service_field_values")
+
+
+def pd_event_rules_migrate() -> None:
+    _entry("event_rules_migrate")
