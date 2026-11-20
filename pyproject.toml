@@ -66,6 +66,7 @@ pd-service-field-values = "pagerduty_ops.console_scripts:pd_service_field_values
 pd-event-rules-migrate = "pagerduty_ops.console_scripts:pd_event_rules_migrate"
 pd-incident-workflows = "pagerduty_ops.console_scripts:pd_incident_workflows"
 pd-scim-user-sync = "pagerduty_ops.console_scripts:pd_scim_user_sync"
+pd-business-services = "pagerduty_ops.console_scripts:pd_business_services"
 
 [tool.setuptools]
 packages = ["pagerduty_ops", "pagerduty_ops.commands"]

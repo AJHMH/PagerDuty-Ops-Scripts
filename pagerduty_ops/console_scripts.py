@@ -171,3 +171,7 @@ def pd_incident_workflows() -> None:
 
 def pd_scim_user_sync() -> None:
     _entry("scim_user_sync")
+
+
+def pd_business_services() -> None:
+    _entry("business_services")
