@@ -55,6 +55,18 @@ _Avoid_: Job, task, execution
 A second admin's recorded consent to apply a reviewed dry run of an irreversible operation; the admin who requested the run cannot approve it.
 _Avoid_: Sign-off, rehearsal receipt (a receipt proves a rehearsal, not a person's consent)
 
+**Writing run**:
+A Run of a command that can change PagerDuty or ServiceNow and is not a dry run; only one executes at a time.
+_Avoid_: Write job, mutation
+
+**Stopped**:
+The outcome of an apply that was cancelled or timed out, which may have been partly applied.
+_Avoid_: Aborted, killed, failed (failed means the command itself reported failures)
+
+**Scheduled run**:
+A read-only Run started on a schedule by the UI rather than by an admin.
+_Avoid_: Cron job, recurring task
+
 ### People
 
 **Admin**:
