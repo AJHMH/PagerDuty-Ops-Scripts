@@ -44,5 +44,3 @@ Status: **tabled by the maintainer** (2026-11-20). Agreed design so far:
   are updated, and tune the default `--max-writes` for `pd-sn-sync`.
 - **Schedule team ownership:** confirm on one schedule that `PUT /schedules/{id}` with `teams`
   behaves as expected (`pd-reorg` relies on it; the OpenAPI schema marks it read-only).
-- **`CONTRIBUTING.md`:** still says there is no automated test suite. Update it to match
-  `CLAUDE.md`.
