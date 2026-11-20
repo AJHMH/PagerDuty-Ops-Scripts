@@ -322,6 +322,19 @@ Suggested rollout:
 
 PagerDuty has announced Event Rules end-of-life.
 
+### pd-incident-workflows
+```bash
+pd-incident-workflows export -o incident_workflows/            # commit the directory to git
+pd-incident-workflows diff -i incident_workflows/ --fail-on-drift   # read-only; exit 1 on drift
+pd-incident-workflows triggers-export -o trigger_links.csv
+pd-incident-workflows triggers-apply trigger_links.csv --dry-run
+pd-incident-workflows triggers-apply trigger_links.csv -y
+```
+- **`export` and `diff`:** each workflow is written with its steps and triggers. Fields the server changes on its own (`updated_at`, `self` and similar) are left out, so `diff` only reports real changes. This tool doesn't write workflow definitions back; edit them in the PagerDuty UI.
+- **Trigger CSV:** `action (attach|detach), trigger_id, service_id`. The extra `workflow_name` and `trigger_type` columns from `triggers-export` are informational.
+- **Validation:** every row is checked before any write. Triggers subscribed to all services can't have per-service links and are rejected.
+- **Re-runs are safe:** existing links are skipped, and a detach that returns 404 counts as done.
+
 ### pd-sn-sync (ServiceNow ID reconciliation — PagerDuty wins)
 ```bash
 pd-sn-sync report --instance dallastx -f csv -o sn_report.csv      # read-only
