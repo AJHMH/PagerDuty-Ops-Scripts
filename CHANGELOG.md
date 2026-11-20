@@ -46,6 +46,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   wide, round-trippable CSV. Every cell is validated against the field's type and options
   before any write. It sends one atomic `PUT` per service with only the changed fields, and
   `--clear-empty` resets values.
+- `pd-event-rules-migrate` (inventory / convert / activate / deactivate): migrates legacy
+  service Event Rules to Event Orchestration in two explicit steps. Changes need explicit
+  targets and are capped by `--max-services`. Activation is refused while Event Rules that
+  haven't been converted remain. `inventory --fail-on-unmigrated` supports cron.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

@@ -10,11 +10,11 @@ from pagerduty_ops.api import PD_API_BASE
 
 COMMAND_MODULES = [
     "alert_grouping", "apply_tags", "audit_export", "bulk_extensions", "bulk_maintenance_window",
-    "cmdb_enrichment", "custom_fields", "event_orchestration", "export_change_events",
-    "export_ids", "export_log_entries", "list_escalation_policies", "list_incidents",
-    "list_schedules", "list_services", "list_status_pages", "list_teams", "list_users",
-    "list_webhooks", "patch_role", "remove_team_members", "rename_resources", "reorg",
-    "schedule_overrides", "scim_user_audit", "service_deps", "service_field_values",
+    "cmdb_enrichment", "custom_fields", "event_orchestration", "event_rules_migrate",
+    "export_change_events", "export_ids", "export_log_entries", "list_escalation_policies",
+    "list_incidents", "list_schedules", "list_services", "list_status_pages", "list_teams",
+    "list_users", "list_webhooks", "patch_role", "remove_team_members", "rename_resources",
+    "reorg", "schedule_overrides", "scim_user_audit", "service_deps", "service_field_values",
     "service_urgency", "sn_sync", "standards_report", "subscriptions", "team_members",
     "update_team_roles", "v3_schedules", "validate",
 ]

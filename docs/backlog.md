@@ -23,7 +23,6 @@ Status: **tabled by the maintainer** (2026-11-20). Agreed design so far:
 
 | Area | Endpoints | Bulk value |
 |---|---|---|
-| Event Rules → Event Orchestration migration | `POST /services/{id}/rules/convert` | Convert legacy service event rules account-wide, with a dry-run inventory first. |
 | Incident Workflows | `/incident_workflows`, triggers | Export/diff-apply workflows and bulk-attach triggers to services. |
 | Automation Actions | `/automation_actions/actions`, runners, service/team associations | Bulk-associate actions with services and teams. |
 | Business services | `/business_services` | Export/apply definitions (dependencies are already in `pd-service-deps`). |
