@@ -32,7 +32,7 @@ Setuptools entry points are defined in `pagerduty_ops/console_scripts.py`; each 
 Every command module declares its risk next to its parser (ADR 0010): `RISK` for `build_parser()`, or `EXPORT_RISK`/`APPLY_RISK` for two-parser commands, as one `Risk` or a mapping of subcommand to `Risk`. A declaration says whether the command writes, how a dry run is chosen (`--dry-run` or diff-first `--apply`), what makes it an Irreversible operation, and which flags are write caps:
 - Always irreversible: Event Rules conversion.
 - A flag: `--prune`.
-- What the applied Plan contains: SCIM `delete_user` items, or ServiceNow items that clear a value. This is judged from the items rather than the Plan's recorded `options`, which are not hashed and could be edited. The exception is `pd-reorg`, whose `--prune` items look the same as ordinary moves, so its verdict relies on the plan's recorded `prune` option and is advisory.
+- What the applied Plan contains: SCIM `delete_user` items, or ServiceNow items that clear a value. This is judged from the items, never from the Plan's recorded `options`, which are not hashed and could be edited. `pd-reorg` applies are never irreversible (ADR 0010).
 - A ServiceNow production instance.
 
 `assess(module, argv)` turns a declaration and a concrete argv into a verdict for one Run. It fails closed, treating the Run as irreversible when the Plan file or the ServiceNow instance configuration can't be read. The unit suite fails if a command lacks a declaration, or names a subcommand or flag its parser doesn't have.

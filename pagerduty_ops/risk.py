@@ -58,10 +58,8 @@ class Risk:
     write_switch: how a dry run is chosen — ``DRY_RUN_FLAG`` or ``APPLY_FLAG``.
     irreversible: every write is an Irreversible operation (e.g. Event Rules conversion).
     irreversible_flags: flags that make a write irreversible (e.g. ``--prune``).
-    irreversible_plan_options: options recorded in the applied Plan file that make it
-        irreversible (e.g. a plan compiled with ``--prune``). Advisory: options are not part
-        of the plan hash, so prefer ``irreversible_plan_items`` where the items show it.
-    irreversible_plan_items: Plan items whose presence makes the apply irreversible.
+    irreversible_plan_items: Plan items whose presence makes the apply irreversible. Judged
+        from the items, never the Plan's recorded options, which are not hashed.
     irreversible_on_sn_production: an apply to a ServiceNow production instance is
         irreversible.
     cap_flags: write caps that must not be raised without a recorded override.
@@ -72,7 +70,6 @@ class Risk:
     write_switch: str | None = None
     irreversible: bool = False
     irreversible_flags: tuple[str, ...] = ()
-    irreversible_plan_options: tuple[str, ...] = ()
     irreversible_plan_items: tuple[PlanItemMatch, ...] = ()
     irreversible_on_sn_production: bool = False
     cap_flags: tuple[str, ...] = ()
@@ -82,8 +79,7 @@ class Risk:
         if self.writes and self.write_switch not in (DRY_RUN_FLAG, APPLY_FLAG):
             raise ValueError("a writing command must declare its write_switch")
         if not self.writes and (self.write_switch or self.irreversible
-                                or self.irreversible_flags or self.irreversible_plan_options
-                                or self.irreversible_plan_items
+                                or self.irreversible_flags or self.irreversible_plan_items
                                 or self.irreversible_on_sn_production or self.cap_flags):
             raise ValueError("a read-only command cannot declare write settings")
 
@@ -191,7 +187,7 @@ def assess(module: ModuleType, argv: list[str], builder: str = "build_parser", *
         reasons.append("always irreversible")
     reasons += [f"{flag} given" for flag in risk.irreversible_flags
                 if _flag_set(parser, args, flag)]
-    if risk.irreversible_plan_options or risk.irreversible_plan_items:
+    if risk.irreversible_plan_items:
         reasons += _plan_reasons(_resolve_path(getattr(args, "plan_file", None), cwd), risk)
     if risk.irreversible_on_sn_production:
         reasons += _sn_production_reasons(getattr(args, "instance", None))
@@ -209,12 +205,10 @@ def _plan_reasons(plan_file: str | None, risk: Risk) -> list[str]:
     try:
         with open(plan_file, encoding="utf-8") as fh:
             plan = json.load(fh)
-        recorded = plan.get("options") or {}
         items = [i for i in plan.get("items") or [] if isinstance(i, dict)]
     except (OSError, TypeError, ValueError, AttributeError):
         return ["plan file unreadable (fail closed)"]
-    reasons = [f"plan compiled with {name}" for name in risk.irreversible_plan_options
-               if recorded.get(name)]
+    reasons = []
     for match in risk.irreversible_plan_items:
         count = sum(1 for item in items if match.matches(item))
         if count:

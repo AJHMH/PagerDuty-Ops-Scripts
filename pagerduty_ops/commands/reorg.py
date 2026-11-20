@@ -53,7 +53,7 @@ YAML_TEAM_KEYS = {"name", "members", "escalation_policies", "schedules", "servic
 RISK = {
     "export": READ_ONLY,
     "plan": READ_ONLY,
-    "apply": writes_with_dry_run(irreversible_plan_options=("prune",)),
+    "apply": writes_with_dry_run(),
 }
 
 

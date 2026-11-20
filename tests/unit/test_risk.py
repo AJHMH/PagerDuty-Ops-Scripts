@@ -27,6 +27,12 @@ def _plan(tmp_path, **options):
     return str(path)
 
 
+def _plan_with(tmp_path, items, **options):
+    path = tmp_path / "plan.json"
+    path.write_text(json.dumps({"kind": "x", "items": items, "options": options}), "utf-8")
+    return str(path)
+
+
 def test_read_only_command_does_not_write():
     verdict = assess(list_users, [])
     assert (verdict.writes, verdict.dry_run, verdict.irreversible) == (False, False, False)
@@ -63,16 +69,19 @@ def test_event_rules_conversion_is_always_irreversible():
     assert assess(event_rules_migrate, ["activate", "--all"]).irreversible is False
 
 
-def test_reorg_apply_of_a_pruning_plan_is_irreversible(tmp_path):
-    assert assess(reorg, ["apply", _plan(tmp_path, prune=True)]).irreversible is True
-    assert assess(reorg, ["apply", _plan(tmp_path, prune=False)]).irreversible is False
+def test_reorg_apply_is_reversible_even_for_a_pruning_plan(tmp_path):
+    # ADR 0010: membership and resource-team removals can be re-added, so no Approval.
+    plan = _plan_with(tmp_path, [{"op": "remove_member", "team_id": "T1", "user_id": "U1"}],
+                      prune=True)
+    verdict = assess(reorg, ["apply", plan])
+    assert (verdict.writes, verdict.irreversible) == (True, False)
 
 
 def test_unreadable_plan_fails_closed(tmp_path):
-    verdict = assess(reorg, ["apply", str(tmp_path / "missing.json")])
+    verdict = assess(scim_user_sync, ["apply", str(tmp_path / "missing.json")])
     assert verdict.irreversible is True
     (tmp_path / "bad.json").write_text("not json", "utf-8")
-    assert assess(reorg, ["apply", str(tmp_path / "bad.json")]).irreversible is True
+    assert assess(scim_user_sync, ["apply", str(tmp_path / "bad.json")]).irreversible is True
 
 
 def test_servicenow_production_apply_is_irreversible(tmp_path, monkeypatch):
@@ -108,12 +117,6 @@ def test_invalid_arguments_are_a_usage_error():
     assert exc.value.code == 2
 
 
-def _plan_with(tmp_path, items, **options):
-    path = tmp_path / "plan.json"
-    path.write_text(json.dumps({"kind": "x", "items": items, "options": options}), "utf-8")
-    return str(path)
-
-
 def test_scim_plan_that_deletes_users_is_irreversible_whatever_its_options(tmp_path):
     plan = _plan_with(tmp_path, [{"op": "delete_user", "scim_id": "s1"}],
                       delete_orphans=False)
@@ -141,10 +144,10 @@ def test_sn_plan_that_clears_ids_is_irreversible_whatever_its_options(tmp_path, 
 def test_relative_plan_path_resolves_against_the_run_directory(tmp_path, monkeypatch):
     run_dir = tmp_path / "run"
     run_dir.mkdir()
-    _plan_with(run_dir, [], prune=True)
+    _plan_with(run_dir, [{"op": "delete_user", "scim_id": "s1"}])
     monkeypatch.chdir(tmp_path)
-    verdict = assess(reorg, ["apply", "plan.json"], cwd=str(run_dir))
-    assert verdict.reasons == ("plan compiled with prune",)
+    verdict = assess(scim_user_sync, ["apply", "plan.json"], cwd=str(run_dir))
+    assert verdict.reasons == ("plan has 1 delete_user item(s)",)
 
 
 def test_help_is_refused_rather_than_exiting_zero():
