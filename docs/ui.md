@@ -35,6 +35,8 @@ These are refused before any process starts, and no Run is recorded.
 - Any argument containing a configured secret value.
 - Any path outside the Run's own directory: absolute, drive-qualified, UNC, or containing `..`.
 
+These are judged on the arguments as the command's own parser reads them, not on the raw text. That way argparse's prefixes (`--tok`), attached values (`-oPATH`) and short-option clusters (`-qoPATH`) can't slip past.
+
 **403 (not allowed):**
 - Any command or subcommand whose risk declaration says it writes, for every role.
 

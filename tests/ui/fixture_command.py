@@ -9,6 +9,7 @@ import os
 import sys
 import time
 
+from pagerduty_ops.cli import add_logging_args, add_token_args
 from pagerduty_ops.risk import READ_ONLY
 
 RISK = READ_ONLY
@@ -16,11 +17,14 @@ RISK = READ_ONLY
 
 def build_parser():
     p = argparse.ArgumentParser(description="UI test fixture.")
+    add_token_args(p)    # the engine's real -t/--token and --prompt
+    add_logging_args(p)  # -v/-q/--log-file, so short options can be clustered
     p.add_argument("--print", dest="text", default="", help="Write this to stdout.")
     p.add_argument("--log", default="", help="Write this to stderr.")
     p.add_argument("--exit-code", type=int, default=0)
     p.add_argument("--print-env", help="Write the value of this environment variable.")
     p.add_argument("-r", "--report", help="A file argument (ignored).")
+    p.add_argument("-o", "--output", help="Another file argument (ignored).")
     p.add_argument("--sleep", type=float, default=0, help="Sleep this many seconds first.")
     return p
 

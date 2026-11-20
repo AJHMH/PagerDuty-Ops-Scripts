@@ -93,16 +93,19 @@ def test_help_is_refused(client):
     ["--tok", "abc"],          # argparse accepts unique prefixes of long options
     ["--tok=abc"],
     ["--promp"],
+    ["-qtabc"],                # and clusters of short options
+    ["-vt", "abc"],
 ])
 def test_secrets_and_prompts_on_the_command_line_are_refused(client, argv):
-    # pd-list-users really has -t/--token and --prompt, so only the gate can refuse these.
-    response = run(client, argv, command="pd-list-users")
+    # The fixture has the engine's real -t/--token and --prompt, so only the gate can refuse.
+    response = run(client, argv)
     assert response.status_code == 422
     assert "not allowed" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("path", ["/etc/passwd", "..\\..\\x.csv", "../x.csv", "C:\\x.csv",
-                                  "--report=../x", "-r/etc/x", "-rC:\\x.csv", "-r..\\x"])
+                                  "--report=../x", "-r/etc/x", "-rC:\\x.csv", "-r..\\x",
+                                  "-qo/tmp/outside.csv", "-qvr../x", "--rep=../x"])
 def test_paths_outside_the_run_directory_are_refused(client, path):
     argv = [path] if path.startswith("-") else ["--report", path]
     assert run(client, argv).status_code == 422
