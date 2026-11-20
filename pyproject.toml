@@ -64,6 +64,7 @@ pd-custom-fields = "pagerduty_ops.console_scripts:pd_custom_fields"
 pd-cmdb-enrichment = "pagerduty_ops.console_scripts:pd_cmdb_enrichment"
 pd-service-field-values = "pagerduty_ops.console_scripts:pd_service_field_values"
 pd-event-rules-migrate = "pagerduty_ops.console_scripts:pd_event_rules_migrate"
+pd-incident-workflows = "pagerduty_ops.console_scripts:pd_incident_workflows"
 
 [tool.setuptools]
 packages = ["pagerduty_ops", "pagerduty_ops.commands"]

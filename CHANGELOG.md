@@ -50,6 +50,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
   service Event Rules to Event Orchestration in two explicit steps. Changes need explicit
   targets and are capped by `--max-services`. Activation is refused while Event Rules that
   haven't been converted remain. `inventory --fail-on-unmigrated` supports cron.
+- `pd-incident-workflows` (export / diff / triggers-export / triggers-apply): git-friendly
+  workflow exports with a read-only drift diff (`--fail-on-drift`), plus idempotent bulk
+  attach and detach of workflow triggers to services from CSV.
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).

@@ -163,3 +163,7 @@ def pd_service_field_values() -> None:
 
 def pd_event_rules_migrate() -> None:
     _entry("event_rules_migrate")
+
+
+def pd_incident_workflows() -> None:
+    _entry("incident_workflows")

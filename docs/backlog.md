@@ -23,7 +23,7 @@ Status: **tabled by the maintainer** (2026-11-20). Agreed design so far:
 
 | Area | Endpoints | Bulk value |
 |---|---|---|
-| Incident Workflows | `/incident_workflows`, triggers | Export/diff-apply workflows and bulk-attach triggers to services. |
+| Incident Workflow definition writes | `PUT /incident_workflows/{id}` | Apply edited workflow steps from git. Deferred from `pd-incident-workflows`, which exports, diffs and manages trigger links: verify the step update format against a live account first. |
 | Automation Actions | `/automation_actions/actions`, runners, service/team associations | Bulk-associate actions with services and teams. |
 | Business services | `/business_services` | Export/apply definitions (dependencies are already in `pd-service-deps`). |
 | Team escalation-policy ownership audit | `/teams/{id}/escalation_policies` | Covered by `pd-reorg`; a standalone report may still help. |
