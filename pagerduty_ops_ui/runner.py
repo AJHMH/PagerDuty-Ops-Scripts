@@ -32,7 +32,7 @@ REDACTED = "[redacted]"
 
 @dataclass
 class Result:
-    exit_code: int
+    exit_code: int | None
     outcome: str
     stdout: str
     stderr: str
@@ -57,14 +57,24 @@ def redact(text: str, secrets) -> str:
 
 
 def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
-                extra_env: dict[str, str], secret_env: dict[str, str]) -> Result:
+                extra_env: dict[str, str], secret_env: dict[str, str],
+                timeout: float | None = None) -> Result:
+    """Run to completion, or kill the process at `timeout` seconds (outcome "stopped")."""
     code = LAUNCHER.format(name=entry.name, module=entry.module, attr=entry.attr)
-    done = subprocess.run(  # noqa: S603 - fixed interpreter, argv list, no shell
-        [sys.executable, "-c", code, *argv],
-        cwd=cwd, env=child_env(extra_env, secret_env), stdin=subprocess.DEVNULL,
-        capture_output=True, check=False,
-    )
     secrets = secret_env.values()
+    try:
+        done = subprocess.run(  # noqa: S603 - fixed interpreter, argv list, no shell
+            [sys.executable, "-c", code, *argv],
+            cwd=cwd, env=child_env(extra_env, secret_env), stdin=subprocess.DEVNULL,
+            capture_output=True, check=False, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as e:
+        return Result(
+            exit_code=None, outcome="stopped",
+            stdout=redact((e.stdout or b"").decode("utf-8", "replace"), secrets),
+            stderr=redact((e.stderr or b"").decode("utf-8", "replace"), secrets)
+            + f"\n[stopped: no result after {timeout:g} seconds]\n",
+        )
     return Result(
         exit_code=done.returncode,
         outcome=outcome_for(done.returncode),

@@ -17,6 +17,10 @@ from .runner import run_command
 from .settings import Settings
 from .store import RunRecord, RunStore
 
+# Roles are read from the session at sign-in; a short session means removing someone from a
+# PD-Ops group in AD/Okta takes effect within a working day.
+SESSION_MAX_AGE_SECONDS = 8 * 3600
+
 
 class RunRequest(BaseModel):
     command: str
@@ -31,7 +35,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                catalog=None) -> FastAPI:
     app = FastAPI(title="PagerDuty Ops", docs_url=None, redoc_url=None)
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret,
-                       https_only=True, same_site="lax")
+                       https_only=True, same_site="lax", max_age=SESSION_MAX_AGE_SECONDS)
     if identity is None:
         if settings.okta is None:
             raise ValueError("Okta settings are required when no identity provider is given.")
@@ -73,11 +77,13 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             raise HTTPException(404, f"Unknown command {body.command!r}.")
         run_id = str(uuid.uuid4())
         run_dir = settings.run_root / run_id
-        gate(entry, body.argv, run_dir, settings.secret_env.values())
+        verdict = gate(entry, body.argv, run_dir, settings.secret_env.values())
         run_dir.mkdir(parents=True)
         started = _now()
         result = run_command(entry, body.argv, cwd=run_dir, extra_env=settings.extra_env,
-                             secret_env=settings.secret_env)
+                             secret_env=settings.secret_env,
+                             timeout=verdict.timeout_minutes * 60 if verdict.timeout_minutes
+                             else settings.run_timeout_seconds)
         return store.save(RunRecord(
             id=run_id, command=entry.name, argv=body.argv, requested_by=admin.email,
             requester_name=admin.name, requester_role=role.label, started_at=started,

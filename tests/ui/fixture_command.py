@@ -7,6 +7,7 @@ through pagerduty_ops.cli.run so stdout/stderr and exit codes are the real ones.
 import argparse
 import os
 import sys
+import time
 
 from pagerduty_ops.risk import READ_ONLY
 
@@ -19,12 +20,15 @@ def build_parser():
     p.add_argument("--log", default="", help="Write this to stderr.")
     p.add_argument("--exit-code", type=int, default=0)
     p.add_argument("--print-env", help="Write the value of this environment variable.")
-    p.add_argument("--report", help="A file argument (ignored).")
+    p.add_argument("-r", "--report", help="A file argument (ignored).")
+    p.add_argument("--sleep", type=float, default=0, help="Sleep this many seconds first.")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.sleep:
+        time.sleep(args.sleep)
     if args.text:
         sys.stdout.write(args.text + "\n")
     if args.print_env:

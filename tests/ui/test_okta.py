@@ -51,3 +51,9 @@ def test_login_redirects_to_okta_with_pkce_and_the_groups_scope(okta_client):
 
 def test_without_a_session_nobody_is_signed_in(okta_client):
     assert okta_client.get("/api/me").status_code == 401
+
+
+def test_session_cookie_is_short_lived_so_group_changes_apply_quickly(okta_client):
+    from pagerduty_ops_ui.app import SESSION_MAX_AGE_SECONDS
+
+    assert SESSION_MAX_AGE_SECONDS <= 12 * 3600

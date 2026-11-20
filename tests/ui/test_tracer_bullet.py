@@ -86,18 +86,25 @@ def test_help_is_refused(client):
 
 
 @pytest.mark.parametrize("argv", [
-    ["--print", "x", "--token", "abc"],
+    ["--token", "abc"],
     ["-t", "abc"],
+    ["-tabc"],
     ["--prompt"],
+    ["--tok", "abc"],          # argparse accepts unique prefixes of long options
+    ["--tok=abc"],
+    ["--promp"],
 ])
 def test_secrets_and_prompts_on_the_command_line_are_refused(client, argv):
-    assert run(client, argv).status_code == 422
+    # pd-list-users really has -t/--token and --prompt, so only the gate can refuse these.
+    response = run(client, argv, command="pd-list-users")
+    assert response.status_code == 422
+    assert "not allowed" in response.json()["detail"]
 
 
 @pytest.mark.parametrize("path", ["/etc/passwd", "..\\..\\x.csv", "../x.csv", "C:\\x.csv",
-                                  "--report=../x"])
+                                  "--report=../x", "-r/etc/x", "-rC:\\x.csv", "-r..\\x"])
 def test_paths_outside_the_run_directory_are_refused(client, path):
-    argv = [path] if path.startswith("--") else ["--report", path]
+    argv = [path] if path.startswith("-") else ["--report", path]
     assert run(client, argv).status_code == 422
 
 
@@ -151,3 +158,10 @@ def test_the_built_front_end_is_served_beside_the_api(settings, catalog, tmp_pat
     with TestClient(create_app(settings, identity=HeaderIdentity(), catalog=catalog)) as c:
         assert "PagerDuty Ops" in c.get("/").text
         assert c.get("/api/me").status_code == 401  # the API still wins over static files
+
+
+def test_a_run_that_outlives_its_timeout_is_stopped(client, settings):
+    settings.run_timeout_seconds = 1
+    created = run(client, ["--sleep", "5"]).json()
+    assert created["outcome"] == "stopped"
+    assert created["exit_code"] is None

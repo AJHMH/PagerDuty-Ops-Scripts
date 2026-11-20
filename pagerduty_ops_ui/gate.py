@@ -38,15 +38,32 @@ def _escapes_run_dir(value: str) -> bool:
     return ".." in re.split(r"[\\/]", value)
 
 
+def _forbidden(flag: str) -> bool:
+    """--token/--prompt, any unique prefix argparse would expand to them, and -t[value]."""
+    if flag.startswith("--"):
+        return len(flag) >= 3 and any(f.startswith(flag) for f in FORBIDDEN_FLAGS)
+    return flag.startswith("-t")
+
+
+def _values(arg: str) -> list[str]:
+    """The parts of one argument that may be a path: the argument itself, the value of
+    --long=value, and the value attached to a short option (-oFILE)."""
+    if arg.startswith("--"):
+        return [arg.partition("=")[2]]
+    if arg.startswith("-") and len(arg) > 2:
+        return [arg[2:]]
+    return [arg]
+
+
 def check_argv(argv: list[str], secrets) -> None:
     for arg in argv:
-        flag, _, value = arg.partition("=") if arg.startswith("--") else (arg, "", "")
-        if flag in FORBIDDEN_FLAGS or (arg.startswith("-t") and not arg.startswith("--")):
+        flag = arg.partition("=")[0] if arg.startswith("--") else arg[:2]
+        if arg.startswith("-") and _forbidden(flag):
             _refuse(f"{flag} is not allowed: Runs use the service's credentials.")
         if any(s and len(s) >= 4 and s in arg for s in secrets):
             _refuse("An argument contains a secret value; secrets are never arguments.")
-        for candidate in (arg, value):
-            if candidate and not candidate.startswith("-") and _escapes_run_dir(candidate):
+        for candidate in _values(arg):
+            if candidate and _escapes_run_dir(candidate):
                 _refuse(f"{candidate!r} points outside the Run's own directory.")
 
 

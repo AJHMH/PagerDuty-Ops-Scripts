@@ -41,6 +41,7 @@ class Settings:
     extra_env: dict[str, str] = field(default_factory=dict)
     okta: OktaSettings | None = None
     static_dir: Path | None = None
+    run_timeout_seconds: int = 2 * 3600  # ADR 0012; a command's declaration may extend it
 
     @classmethod
     def from_env(cls) -> Settings:
