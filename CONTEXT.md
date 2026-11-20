@@ -63,6 +63,10 @@ _Avoid_: Write job, mutation
 The outcome of an apply that was cancelled or timed out, which may have been partly applied.
 _Avoid_: Aborted, killed, failed (failed means the command itself reported failures)
 
+**Ledger**:
+The permanent record of who requested and approved each Writing run, kept after the Run itself is purged.
+_Avoid_: Audit log (that is PagerDuty's own), history
+
 **Scheduled run**:
 A read-only Run started on a schedule by the UI rather than by an admin.
 _Avoid_: Cron job, recurring task

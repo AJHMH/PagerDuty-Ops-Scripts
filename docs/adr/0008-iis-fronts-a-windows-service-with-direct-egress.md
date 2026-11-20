@@ -15,3 +15,8 @@ and the Okta domain; inbound HTTPS is from the City network only.
   the Windows server team already patches and monitors.
 - Docker on Windows — rejected: an extra runtime for the server team to support, for no gain
   over a Windows Service.
+
+## Consequences
+
+Roles map from three new AD groups pushed to Okta: `PD-Ops-Viewer`, `PD-Ops-Operator` and
+`PD-Ops-Approver`. The whole admin team starts in `PD-Ops-Approver`.
