@@ -114,8 +114,12 @@ def request(
     params=None,
     data=None,
     extra_headers: dict | None = None,
+    raw_body: str | bytes | None = None,
 ) -> dict:
     """Make one logical API call. Returns parsed JSON ({} for empty bodies).
+
+    ``raw_body`` sends a non-JSON payload (e.g. text/csv uploads); set its
+    Content-Type via ``extra_headers``.
 
     Raises PDApiError on any failure. Callers decide whether a failure aborts
     the run (auth errors should) or is counted and skipped (bulk loops).
@@ -123,14 +127,16 @@ def request(
     url = f"{PD_API_BASE}/{endpoint.lstrip('/')}"
     headers = build_headers(token, extra_headers)
     session = get_session()
-    json_body = data if method in ("POST", "PUT", "PATCH") else None
+    json_body = data if method in ("POST", "PUT", "PATCH", "DELETE") else None
     attempts = MUTATING_429_ATTEMPTS if method in ("POST", "PATCH") else 1
 
     response = None
     for attempt in range(attempts):
         try:
             response = session.request(
-                method, url, headers=headers, params=params, json=json_body, timeout=REQUEST_TIMEOUT
+                method, url, headers=headers, params=params,
+                json=json_body if raw_body is None else None,
+                data=raw_body, timeout=REQUEST_TIMEOUT,
             )
         except requests.RequestException as e:
             raise PDApiError(f"{method} /{endpoint}: network error: {e}") from e
