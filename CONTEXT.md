@@ -41,6 +41,20 @@ _Avoid_: Approval, sign-off
 The PagerDuty service a ServiceNow group points at, from which that group's other PagerDuty IDs are derived.
 _Avoid_: Primary service
 
+**Irreversible operation**:
+A change that cannot be undone once applied: SCIM user deletion, Event Rules conversion, any prune, and any ServiceNow production apply.
+_Avoid_: Destructive change, dangerous action
+
+### Running the tools
+
+**Run**:
+One execution of a command: who ran it, its inputs, whether it was a dry run or an apply, the plan or diff it produced, its output and its outcome.
+_Avoid_: Job, task, execution
+
+**Approval**:
+A second admin's recorded consent to apply a reviewed dry run of an irreversible operation; the admin who requested the run cannot approve it.
+_Avoid_: Sign-off, rehearsal receipt (a receipt proves a rehearsal, not a person's consent)
+
 ### People
 
 **Admin**:
