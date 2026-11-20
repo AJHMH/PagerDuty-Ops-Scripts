@@ -69,3 +69,29 @@ def test_apply_dry_run_and_contradiction(tmp_path):
     assert not [c for c in responses.calls if c.request.method == "POST"]
     p.write_text(HDR + "associate,service,PS2,service,PS3\ndisassociate,service,PS2,service,PS3\n")
     assert service_deps.main(["apply", str(p), "-y"]) == 2
+
+
+@responses.activate
+def test_export_fails_without_output_when_a_read_fails(capsys):
+    responses.get(f"{PD_API_BASE}/services", json={"services": [{"id": "PS1"}], "more": False})
+    responses.get(f"{PD_API_BASE}/business_services",
+                  json={"business_services": [], "more": False})
+    responses.get(f"{PD_API_BASE}/service_dependencies/technical_services/PS1", status=404,
+                  json={"error": {"message": "nope"}})
+    assert service_deps.main(["export"]) == 1
+    assert capsys.readouterr().out == ""
+
+
+@responses.activate
+def test_apply_disassociates_before_associating(tmp_path):
+    p = tmp_path / "d.csv"
+    p.write_text(HDR + "associate,service,PS2,business_service,PB1\n"
+                 "disassociate,service,PS1,business_service,PB1\n")
+    responses.get(f"{PD_API_BASE}/service_dependencies/business_services/PB1",
+                  json={"relationships": [rel("PS1", "PB1")]})
+    responses.post(f"{PD_API_BASE}/service_dependencies/disassociate", json={})
+    responses.post(f"{PD_API_BASE}/service_dependencies/associate", json={})
+    assert service_deps.main(["apply", str(p), "-y"]) == 0
+    posts = [c.request.url.rsplit("/", 1)[1] for c in responses.calls
+             if c.request.method == "POST"]
+    assert posts == ["disassociate", "associate"]

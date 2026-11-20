@@ -16,6 +16,7 @@ import sys
 from ..api import PDApiError, paginate, request
 from ..bulkops import load_csv_rows
 from ..cli import (
+    EXIT_FAILURES,
     EXIT_OK,
     EXIT_USAGE,
     add_format_args,
@@ -76,6 +77,7 @@ def relationships_of(token, kind, oid) -> set[tuple]:
 def export_main(args) -> int:
     token = init(args)
     seen: set[tuple] = set()
+    failed = 0
     for kind, resource in (("service", "services"), ("business_service", "business_services")):
         for obj in paginate(resource, token):
             try:
@@ -84,6 +86,12 @@ def export_main(args) -> int:
                 if e.is_auth_error:
                     raise
                 log.error("%s %s: %s", kind, obj["id"], e)
+                failed += 1
+    if failed:
+        # Never publish a partial export that automation could mistake for a full backup.
+        log.error("Export aborted: dependencies of %d services could not be read; no output "
+                  "written.", failed)
+        return EXIT_FAILURES
     rows = [dict(zip(COLUMNS, ("associate", *rel), strict=True)) for rel in sorted(seen)]
     write_payload(render_rows(rows, COLUMNS, args.format), args.output)
     log.info("Exported %d dependencies.", len(rows))
@@ -138,8 +146,9 @@ def apply_main(args) -> int:
                 raise
             print(f"Error: cannot read dependencies of {kind} {oid}: {e}", file=sys.stderr)
             return EXIT_USAGE
-    todo = {"associate": sorted(wanted["associate"] - existing),
-            "disassociate": sorted(wanted["disassociate"] & existing)}
+    # Disassociate first: a replacement must free capacity (2,000 per service) before adding.
+    todo = {"disassociate": sorted(wanted["disassociate"] & existing),
+            "associate": sorted(wanted["associate"] - existing)}
     skipped = len(rows) - sum(len(v) for v in todo.values())
     log.info("%d to associate, %d to disassociate, %d already in desired state.",
              len(todo["associate"]), len(todo["disassociate"]), skipped)
