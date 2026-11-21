@@ -30,7 +30,7 @@ def reviewed_dry_run(client, values=None, files=None, headers=OPERATOR):
         response = client.post("/api/runs", json=body, headers=headers)
     assert response.status_code == 201, response.text
     dry = wait(client, response.json()["id"])
-    assert dry["outcome"] == "succeeded", dry
+    assert dry["outcome"] == "succeeded", (dry["outcome"], dry["message"], dry["stderr"])
     assert client.post(f"/api/runs/{dry['id']}/review", headers=headers).status_code == 200
     return dry
 

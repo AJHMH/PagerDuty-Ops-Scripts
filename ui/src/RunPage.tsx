@@ -168,9 +168,15 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
 function LiveLog({ text, live }: { text: string; live: boolean }) {
   const ref = useRef<HTMLPreElement>(null);
   const following = useRef(true);
+  const wasLive = useRef(live);
   useLayoutEffect(() => {
     const pre = ref.current;
-    if (pre && live && following.current) pre.scrollTop = pre.scrollHeight;
+    // Also on the update that finishes the Run: it adds the last lines and replaces a
+    // trimmed live tail with the whole log. A Run opened after it finished doesn't jump.
+    if (pre && (live || wasLive.current) && following.current) {
+      pre.scrollTop = pre.scrollHeight;
+    }
+    wasLive.current = live;
   }, [text, live]);
   return (
     <>
