@@ -24,6 +24,8 @@ from .migrate import check_schema
 from .review import review
 
 QUEUED, RUNNING, FINISHED = "queued", "running", "finished"
+RUN_KINDS = ("report", "dry-run", "apply")
+UNFINISHED = "unfinished"  # history filter: Runs still queued or running (no outcome yet)
 
 
 def now() -> datetime:
@@ -130,18 +132,14 @@ def summary_dict(run: RunRecord) -> dict:
 
 
 def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
+    """The whole Run, as its page shows it."""
     return {
-        "id": run.id, "command": run.command, "argv": list(run.argv),
-        "requested_by": run.requested_by, "requester_name": run.requester_name,
-        "requester_role": run.requester_role,
-        "status": run.status, "queued_at": _iso(run.queued_at),
-        "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
+        **summary_dict(run),
         "cancelled_by": run.cancelled_by, "fresh_dry_run_id": run.fresh_dry_run_id,
-        "exit_code": run.exit_code, "outcome": run.outcome,
-        "stdout": run.stdout, "stderr": run.stderr, "message": _message(run),
-        "kind": run.kind, "input_hash": run.input_hash, "output_hash": run.output_hash,
-        "reviewed_by": run.reviewed_by, "reviewed_at": _iso(run.reviewed_at),
-        "applied_run_id": run.applied_run_id, "applied_from": run.applied_from,
+        "exit_code": run.exit_code, "stdout": run.stdout, "stderr": run.stderr,
+        "message": _message(run), "input_hash": run.input_hash,
+        "output_hash": run.output_hash, "reviewed_by": run.reviewed_by,
+        "reviewed_at": _iso(run.reviewed_at), "applied_run_id": run.applied_run_id,
         "review": (review(run.stdout, run.stderr, run.outcome)
                    if run.kind == "dry-run" and run.status == FINISHED else None),
         "files": [file_dict(f) for f in files],
@@ -316,7 +314,9 @@ class RunStore:
             conditions.append(RunRecord.queued_at >= since)
         if before is not None:
             conditions.append(RunRecord.queued_at < before)
-        if outcome:
+        if outcome == UNFINISHED:
+            conditions.append(RunRecord.status != FINISHED)
+        elif outcome:
             conditions.append(RunRecord.outcome == outcome)
         if kind:
             conditions.append(RunRecord.kind == kind)

@@ -56,9 +56,15 @@ export interface RunFile {
   sha256: string;
 }
 
-// "changed": an apply whose fresh dry run no longer matched the review, so nothing ran.
-export type Outcome = "succeeded" | "failed" | "usage-error" | "auth-error" | "stopped"
-  | "changed";
+// How a finished Run ended. "changed": an apply whose fresh dry run no longer matched the
+// review, so nothing ran. The service's list is the source of truth (executor.FINAL_OUTCOMES).
+export const OUTCOMES = ["succeeded", "failed", "usage-error", "auth-error", "stopped",
+  "changed"] as const;
+export type Outcome = typeof OUTCOMES[number];
+
+export const RUN_KINDS = [["report", "Report"], ["dry-run", "Dry run"],
+  ["apply", "Apply"]] as const;
+export type RunKind = typeof RUN_KINDS[number][0];
 
 // Runs execute in the background: applies wait "queued" for the one writing slot.
 export type Status = "queued" | "running" | "finished";
@@ -82,7 +88,7 @@ export interface Run {
   stderr: string;
   message: string | null;
   files: RunFile[];
-  kind: "report" | "dry-run" | "apply";
+  kind: RunKind;
   reviewed_by: string | null;
   reviewed_at: string | null;
   applied_run_id: string | null;

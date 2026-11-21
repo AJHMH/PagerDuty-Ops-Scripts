@@ -5,7 +5,7 @@ also finds a Run started through the API."""
 from datetime import datetime, timedelta, timezone
 
 import pytest
-from conftest import APPROVER, NO_ROLE, OPERATOR, VIEWER, finished
+from conftest import APPROVER, NO_ROLE, OPERATOR, VIEWER, finished, wait
 
 T0 = datetime(2026, 11, 1, 12, 0, tzinfo=timezone.utc)
 
@@ -20,7 +20,7 @@ def seed(settings, rows):
             id=row["id"], command=row.get("command", "pd-list-users"), argv=[],
             requested_by=row.get("email", "ann@dallas.gov"),
             requester_name=row.get("name", "Ann Lee"), requester_role="operator",
-            kind=row.get("kind", "report"), status="finished",
+            kind=row.get("kind", "report"), status=row.get("status", "finished"),
             outcome=row.get("outcome", "succeeded"), queued_at=when, started_at=when,
             finished_at=when, timeout_seconds=60, stdout="data", stderr="log"))
 
@@ -94,6 +94,12 @@ def test_filter_by_date_range_includes_the_start_and_excludes_the_end(history):
     assert ids(history(before=before)) == ["r3", "r2", "r1"]
 
 
+def test_dates_in_utc_with_a_z_work_as_the_page_sends_them(history):
+    since = (T0 + timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    before = (T0 + timedelta(days=3)).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+    assert ids(history(since=since, before=before)) == ["r3", "r2"]
+
+
 def test_dates_need_a_timezone(client, history):
     response = client.get("/api/runs", params={"since": "2026-11-02T00:00:00"},
                           headers=VIEWER)
@@ -104,6 +110,21 @@ def test_dates_need_a_timezone(client, history):
 def test_filter_by_outcome(history):
     assert ids(history(outcome="failed")) == ["r3"]
     assert ids(history(outcome="stopped")) == ["r4"]
+
+
+@pytest.mark.parametrize("outcome", ["usage-error", "auth-error", "changed"])
+def test_every_outcome_can_be_found(client, settings, outcome):
+    seed(settings, [{"id": "x1", "outcome": outcome}, {"id": "x2"}])
+    page = client.get("/api/runs", params={"outcome": outcome}, headers=VIEWER).json()
+    assert ids(page) == ["x1"]
+
+
+def test_runs_still_in_flight_can_be_found(client, settings):
+    seed(settings, [{"id": "q1", "status": "queued", "outcome": None, "kind": "apply"},
+                    {"id": "q2", "status": "running", "outcome": None},
+                    {"id": "q3"}])
+    page = client.get("/api/runs", params={"outcome": "unfinished"}, headers=VIEWER).json()
+    assert ids(page) == ["q2", "q1"]
 
 
 def test_filter_by_dry_run_or_apply(history):
@@ -143,3 +164,34 @@ def test_a_run_started_through_the_api_appears_in_the_history(client, history):
     page = history(command="ui-fixture")
     assert ids(page) == [run["id"]]
     assert page["runs"][0]["outcome"] == "succeeded"
+
+
+def test_a_real_dry_run_and_its_apply_are_found_by_kind(client):
+    response = client.post("/api/runs", json={"command": "ui-writer", "values": {}},
+                           headers=OPERATOR)
+    dry = finished(client, response)
+    assert client.post(f"/api/runs/{dry['id']}/review", headers=OPERATOR).status_code == 200
+    applied = client.post(f"/api/runs/{dry['id']}/apply", headers=OPERATOR).json()
+    applied = wait(client, applied["id"])
+
+    def search(**params):
+        page = client.get("/api/runs", params={"command": "ui-writer", **params},
+                          headers=VIEWER).json()
+        return ids(page)
+
+    fresh = applied["fresh_dry_run_id"]  # the check inside the writing slot is a dry run too
+    assert search(kind="apply") == [applied["id"]]
+    assert search(kind="dry-run") == [fresh, dry["id"]]
+    assert search(kind="apply", outcome="succeeded", requester="ann") == [applied["id"]]
+
+
+def test_the_pages_outcome_list_matches_the_services():
+    # The History page offers one choice per outcome; a new outcome must reach both.
+    import re
+    from pathlib import Path
+
+    from pagerduty_ops_ui.executor import FINAL_OUTCOMES
+
+    api = (Path(__file__).parents[2] / "ui" / "src" / "api.ts").read_text(encoding="utf-8")
+    listed = re.search(r"export const OUTCOMES = \[(.*?)\] as const", api, re.S).group(1)
+    assert set(re.findall(r'"([^"]+)"', listed)) == set(FINAL_OUTCOMES)

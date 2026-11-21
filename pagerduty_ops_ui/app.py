@@ -16,14 +16,21 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import files as run_files
 from .catalog import describe, engine_catalog
-from .executor import Executor, InputChanged, Requester, copy_inputs, new_run
+from .executor import (
+    FINAL_OUTCOMES,
+    Executor,
+    InputChanged,
+    Requester,
+    copy_inputs,
+    new_run,
+)
 from .forms import BadValues, build_argv, form_for
 from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .settings import Settings
-from .store import FINISHED, QUEUED, RunFile, RunRecord, RunStore
+from .store import FINISHED, QUEUED, RUN_KINDS, UNFINISHED, RunFile, RunRecord, RunStore
 
 # Every state-changing API request must carry this header. A browser can't add a custom
 # header to a cross-origin request without a CORS preflight, which this API never grants, so
@@ -38,9 +45,7 @@ SESSION_MAX_AGE_SECONDS = 8 * 3600
 
 
 MAX_HISTORY_PAGE = 200
-RUN_KINDS = frozenset({"report", "dry-run", "apply"})
-HISTORY_OUTCOMES = frozenset({"succeeded", "failed", "usage-error", "auth-error", "stopped",
-                              "changed"})
+HISTORY_OUTCOMES = FINAL_OUTCOMES | {UNFINISHED}
 
 
 def parse_instant(name: str, value: str | None) -> datetime | None:

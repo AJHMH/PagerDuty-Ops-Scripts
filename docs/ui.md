@@ -114,7 +114,7 @@ Cap overrides are #75.
 - `kind`: `report`, `dry-run` or `apply`;
 - `page` (from 1) and `per_page` (1–200, default 50).
 
-An unknown outcome or kind, a date without a timezone, or a page out of range is refused (422). The History page keeps its filters in the URL (`#/history?…`), so a search can be shared; its From and To dates are whole local days, and To includes its day. Migration `0002` indexes Runs by when they were requested.
+`outcome=unfinished` finds Runs still queued or running. An unknown outcome or kind, a date without a timezone, `page` below 1 or `per_page` outside 1–200 is refused (422); a page past the last one returns no rows, and the History page then offers a link back to the newest Runs. The History page keeps its filters in the URL (`#/history?…`), so a search can be shared; its From and To dates are whole days in the browser's time zone, which the page names, and To includes its day. A malformed date in a shared link is ignored, with a note. Migration `0002` indexes Runs by when they were requested.
 
 ## One writing Run at a time (#74, ADR 0012)
 
