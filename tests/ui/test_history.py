@@ -195,3 +195,30 @@ def test_the_pages_outcome_list_matches_the_services():
     api = (Path(__file__).parents[2] / "ui" / "src" / "api.ts").read_text(encoding="utf-8")
     listed = re.search(r"export const OUTCOMES = \[(.*?)\] as const", api, re.S).group(1)
     assert set(re.findall(r'"([^"]+)"', listed)) == set(FINAL_OUTCOMES)
+
+
+def test_history_and_queue_reads_dont_fetch_output_or_logs(settings):
+    # A finished Run's output and log are stored whole; a list must not drag them along.
+    from sqlalchemy import event
+
+    from pagerduty_ops_ui.store import RunStore
+
+    seed(settings, [{"id": "big"}, {"id": "q", "status": "queued", "outcome": None,
+                                    "kind": "apply"}])
+    store = RunStore(settings.database_url)
+    statements = []
+    event.listen(store.engine, "before_cursor_execute",
+                 lambda conn, cursor, sql, *rest: statements.append(sql.lower()))
+    assert [r["id"] for r in store.search()["runs"]] == ["q", "big"]
+    assert [r["id"] for r in store.queue()["pending"]] == ["q"]
+    selects = [s for s in statements if s.lstrip().startswith("select")]
+    assert selects
+    for column in ("stdout", "stderr", "note"):
+        assert not any(f"runs.{column}" in s for s in selects), column
+
+
+def test_the_queue_lists_summaries(client, settings):
+    seed(settings, [{"id": "q", "status": "queued", "outcome": None, "kind": "apply"}])
+    pending = client.get("/api/queue", headers=VIEWER).json()["pending"]
+    assert [r["id"] for r in pending] == ["q"]
+    assert "stdout" not in pending[0] and "stderr" not in pending[0]

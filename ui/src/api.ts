@@ -166,8 +166,8 @@ export const freshDryRun = (id: string) =>
   call<Run>(`/api/runs/${encodeURIComponent(id)}/fresh-dry-run`, { method: "POST" });
 
 export interface Queue {
-  executing: Run | null;
-  pending: Run[];
+  executing: RunSummary | null;
+  pending: RunSummary[];
 }
 export const getQueue = () => call<Queue>("/api/queue");
 

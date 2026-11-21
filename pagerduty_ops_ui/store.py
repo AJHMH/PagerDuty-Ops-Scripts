@@ -18,7 +18,7 @@ from sqlalchemy import (
     select,
     update,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, load_only, mapped_column
 
 from .migrate import check_schema
 from .review import review
@@ -116,6 +116,15 @@ def _message(run: RunRecord) -> str | None:
 
 def file_dict(f: RunFile) -> dict:
     return {"id": f.id, "role": f.role, "path": f.path, "size": f.size, "sha256": f.sha256}
+
+
+# The columns summary_dict reads: lists of Runs load only these, never a Run's output or log.
+SUMMARY_COLUMNS = (
+    RunRecord.id, RunRecord.command, RunRecord.argv, RunRecord.kind, RunRecord.status,
+    RunRecord.outcome, RunRecord.requested_by, RunRecord.requester_name,
+    RunRecord.requester_role, RunRecord.queued_at, RunRecord.started_at,
+    RunRecord.finished_at, RunRecord.applied_from,
+)
 
 
 def summary_dict(run: RunRecord) -> dict:
@@ -272,12 +281,13 @@ class RunStore:
     def queue(self) -> dict:
         """The executing Writing run, if any, and the ones waiting, oldest first."""
         with Session(self.engine) as session:
-            executing = session.scalar(select(RunRecord).where(
+            summaries = select(RunRecord).options(load_only(*SUMMARY_COLUMNS))
+            executing = session.scalar(summaries.where(
                 RunRecord.kind == "apply", RunRecord.status == RUNNING))
-            pending = session.scalars(select(RunRecord).where(RunRecord.status == QUEUED)
+            pending = session.scalars(summaries.where(RunRecord.status == QUEUED)
                                       .order_by(RunRecord.queued_at, RunRecord.id)).all()
-            return {"executing": to_dict(executing, []) if executing else None,
-                    "pending": [to_dict(r, []) for r in pending]}
+            return {"executing": summary_dict(executing) if executing else None,
+                    "pending": [summary_dict(r) for r in pending]}
 
     def stop_interrupted(self) -> list[int]:
         """At startup: whatever was executing when the service stopped was cut off. Returns
@@ -324,7 +334,7 @@ class RunStore:
             total = session.scalar(select(func.count()).select_from(RunRecord)
                                    .where(*conditions))
             runs = session.scalars(
-                select(RunRecord).where(*conditions)
+                select(RunRecord).options(load_only(*SUMMARY_COLUMNS)).where(*conditions)
                 .order_by(RunRecord.queued_at.desc(), RunRecord.id.desc())
                 .offset((page - 1) * per_page).limit(per_page)).all()
             return {"runs": [summary_dict(r) for r in runs], "total": total, "page": page,

@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { getQueue, type Queue, type Run } from "./api";
+import { getQueue, type Queue, type RunSummary } from "./api";
 
 const POLL_MS = 5000;
 
-function Entry({ run }: { run: Run }) {
+function Entry({ run }: { run: RunSummary }) {
   return (
     <li>
       <a href={`#/runs/${encodeURIComponent(run.id)}`}>{run.command} {run.argv.join(" ")}</a>
