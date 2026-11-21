@@ -13,13 +13,15 @@ file is the short list of rules.
 | Install (dev) | `pip install -e ".[dev]"` |
 | Install (with the UI service) | `pip install -e ".[dev,ui]"` |
 | Unit + UI service tests (mocked HTTP, no token) | `python -m pytest` |
+| UI service tests on SQL Server | `PD_UI_TEST_DATABASE_URL=mssql+pyodbc://… python -m pytest tests/ui` |
 | Front end typecheck + build | `npm --prefix ui ci && npm --prefix ui run build` |
 | Lint | `ruff check .` |
 | Integration tests (opt-in, read-only) | `PD_TEST_TOKEN=... python -m pytest tests/integration` |
 | Demo output (no token) | `python demo_sample_output.py` |
 
 CI (`.github/workflows/ci.yml`) runs ruff, pytest (unit + UI service) on 3.10/3.12 (Linux) and
-3.12 (Windows), the front-end build, pip-audit, and a gitleaks history scan. Run the unit suite and ruff before every commit.
+3.12 (Windows), the UI service tests on SQL Server, the front-end build, pip-audit, and a
+gitleaks history scan. Run the unit suite and ruff before every commit.
 
 ## Layout
 

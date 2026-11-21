@@ -14,3 +14,8 @@ one admin can be applied to production by another.
   rules out a second service instance.
 - Admins keep files on their own machines — rejected: a Run without its exact input and output
   files is not auditable, and per-admin receipts would block two-person production applies.
+
+## Consequences
+
+- The schema is managed by Alembic migrations, applied by `pd-ui-migrate` on each deploy with an account that may change the schema. The service only checks the schema at startup and refuses to start on any other, so its own account needs only read and write on the tables (#70).
+- CI runs the service's test suite on SQL Server as well as SQLite, so a difference between them is caught before deployment (#70).

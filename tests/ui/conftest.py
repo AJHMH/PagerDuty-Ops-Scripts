@@ -3,6 +3,7 @@ provider, SQLite through the production database layer, and real subprocess Runs
 
 import json
 import os
+import shutil
 import time
 from pathlib import Path
 
@@ -54,10 +55,60 @@ def catalog():
     return entries
 
 
+# The Run store's tests run on SQLite by default. CI also runs them on SQL Server (ADR 0007,
+# #70) by setting this to a SQLAlchemy URL for an empty database the tests may own.
+TEST_DATABASE_URL = os.environ.get("PD_UI_TEST_DATABASE_URL", "").strip() or None
+
+
+@pytest.fixture(scope="session")
+def migrated_template(tmp_path_factory):
+    """Migrate once per session: the shared test database, or a SQLite file to copy."""
+    from pagerduty_ops_ui.migrate import upgrade
+
+    if TEST_DATABASE_URL:
+        upgrade(TEST_DATABASE_URL)
+        return None
+    template = tmp_path_factory.mktemp("schema") / "template.db"
+    upgrade(f"sqlite:///{template}")
+    return template
+
+
 @pytest.fixture
-def settings(tmp_path):
+def database_url(tmp_path, migrated_template):
+    """A migrated, empty Run store for one test."""
+    if TEST_DATABASE_URL:
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(TEST_DATABASE_URL)
+        with engine.begin() as db:
+            db.execute(text("DELETE FROM run_files"))
+            db.execute(text("DELETE FROM runs"))
+        engine.dispose()
+        return TEST_DATABASE_URL
+    path = tmp_path / "runs.db"
+    shutil.copyfile(migrated_template, path)
+    return f"sqlite:///{path}"
+
+
+@pytest.fixture
+def empty_database(tmp_path, migrated_template):
+    """A database with no schema at all, as before pd-ui-migrate first runs."""
+    from pagerduty_ops_ui.migrate import downgrade, upgrade
+
+    if TEST_DATABASE_URL:
+        downgrade(TEST_DATABASE_URL, "base")
+        try:
+            yield TEST_DATABASE_URL
+        finally:
+            upgrade(TEST_DATABASE_URL)
+        return
+    yield f"sqlite:///{tmp_path / 'empty.db'}"
+
+
+@pytest.fixture
+def settings(tmp_path, database_url):
     return Settings(
-        database_url=f"sqlite:///{tmp_path / 'runs.db'}",
+        database_url=database_url,
         run_root=tmp_path / "runs",
         secret_env={"PD_API_TOKEN": SECRET},
         extra_env={"PYTHONPATH": os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")])},

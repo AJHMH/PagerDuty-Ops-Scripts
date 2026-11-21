@@ -144,7 +144,7 @@ A Run receives them only as environment variables. Apart from them, it gets a sh
 
 | Variable | Meaning |
 |---|---|
-| `PD_UI_DATABASE_URL` | SQLAlchemy URL, e.g. `mssql+pyodbc://…` (SQL Server) |
+| `PD_UI_DATABASE_URL` | SQLAlchemy URL, e.g. `mssql+pyodbc://…?driver=ODBC+Driver+18+for+SQL+Server` (SQL Server, with Microsoft's ODBC Driver 18 installed) |
 | `PD_UI_RUN_ROOT` | Directory holding each Run's working directory |
 | `PD_UI_SESSION_SECRET` | Key that signs the session cookie |
 | `PD_UI_OKTA_ISSUER`, `PD_UI_OKTA_CLIENT_ID`, `PD_UI_OKTA_CLIENT_SECRET`, `PD_UI_OKTA_REDIRECT_URI` | Okta OIDC app. The ID token must include a `groups` claim |
@@ -167,8 +167,16 @@ npm --prefix ui run build
 ```
 
 ```bash
+pd-ui-migrate
+```
+
+```bash
 PD_UI_STATIC_DIR=ui/dist pd-ui
 ```
+
+**The schema.** `pd-ui-migrate` applies the Alembic migrations in `pagerduty_ops_ui/migrations/` to `PD_UI_DATABASE_URL`. Run it on each deploy, before starting the service, with an account that may change the schema (for example a DBA's). It is safe to run again. The service never changes the schema: at startup it checks that the schema is the one it expects and refuses to start otherwise, naming `pd-ui-migrate`. So the service's own account needs only to read and write the tables.
+
+A change to the models in `store.py` needs a new migration in `pagerduty_ops_ui/migrations/versions/`; `test_migrations.py` fails until the migrations build exactly the schema the models describe.
 
 `pd-ui` listens on 127.0.0.1 only. IIS terminates TLS in front of it, and the service runs as a least-privilege Windows Service. The Windows host packaging is #71.
 
@@ -179,7 +187,7 @@ For front-end work, `npm --prefix ui run dev` serves the UI with hot reload and 
 `tests/ui/` drives the HTTP API in-process with FastAPI's `TestClient`:
 - **Real Runs:** Runs are real subprocesses of test-only fixture commands (`tests/ui/fixture_*.py`). Runs finish in the background, so tests wait for them with `wait()`/`finished()` from `conftest.py`.
 - **Test sign-in:** a header-based test identity provider stands in for Okta.
-- **Database:** SQLite, through the production database layer.
+- **Database:** SQLite by default, migrated with the same migrations as production. CI also runs the whole suite on SQL Server (the `sqlserver` job), against a throwaway container whose password is generated in the job. To do the same locally, set `PD_UI_TEST_DATABASE_URL` to an empty database the tests may own; they migrate it once and clear its rows before each test.
 
 The Okta adapter test stubs Okta's discovery document and checks the login redirect: PKCE, the `groups` scope and the client ID. The token exchange needs a live Okta.
 
@@ -188,7 +196,6 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 These are later tickets:
 - the live log (#68);
 - Run history search (#69);
-- the SQL Server CI job and migrations (#70);
 - the Windows host packaging (#71);
 - the rest of Phase 2: cap overrides (#75), and the Ledger and 90-day purge (#76);
 - Phase 3: Approvals (#77) and what follows them.

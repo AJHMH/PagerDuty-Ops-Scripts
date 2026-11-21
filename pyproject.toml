@@ -35,6 +35,8 @@ ui = [
     "itsdangerous>=2.2.0",
     "httpx>=0.27.0",
     "python-multipart>=0.0.18",
+    "alembic>=1.13.0",
+    "pyodbc>=5.1.0",   # SQL Server (ADR 0007), through Microsoft's ODBC Driver 18
 ]
 
 [project.scripts]
@@ -81,9 +83,14 @@ pd-business-services = "pagerduty_ops.console_scripts:pd_business_services"
 pd-security-config = "pagerduty_ops.console_scripts:pd_security_config"
 pd-templates = "pagerduty_ops.console_scripts:pd_templates"
 pd-ui = "pagerduty_ops_ui.serve:main"
+pd-ui-migrate = "pagerduty_ops_ui.migrate:main"
 
 [tool.setuptools]
-packages = ["pagerduty_ops", "pagerduty_ops.commands", "pagerduty_ops_ui"]
+packages = ["pagerduty_ops", "pagerduty_ops.commands", "pagerduty_ops_ui",
+            "pagerduty_ops_ui.migrations", "pagerduty_ops_ui.migrations.versions"]
+
+[tool.setuptools.package-data]
+"pagerduty_ops_ui.migrations" = ["script.py.mako"]
 
 [tool.ruff]
 line-length = 100

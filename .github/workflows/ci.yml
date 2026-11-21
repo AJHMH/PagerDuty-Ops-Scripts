@@ -49,6 +49,41 @@ jobs:
       - run: pip install -e ".[dev,ui]"
       - run: python -m pytest tests/unit tests/ui -v
 
+  sqlserver:
+    # The service's tests again on SQL Server, the production database (ADR 0007, #70).
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Start a throwaway SQL Server (password generated here, never committed)
+        run: |
+          password="Ci-$(openssl rand -hex 16)-x"
+          echo "::add-mask::$password"
+          echo "MSSQL_SA_PASSWORD=$password" >> "$GITHUB_ENV"
+          docker run -d --name mssql -e ACCEPT_EULA=Y -e "MSSQL_SA_PASSWORD=$password" \
+            -p 1433:1433 mcr.microsoft.com/mssql/server:2022-latest
+      - name: Install Microsoft ODBC Driver 18 (unless the runner has it)
+        run: |
+          if ! odbcinst -q -d 2>/dev/null | grep -q "ODBC Driver 18 for SQL Server"; then
+            curl -fsSL -o packages-microsoft-prod.deb \
+              "https://packages.microsoft.com/config/ubuntu/$(lsb_release -rs)/packages-microsoft-prod.deb"
+            sudo dpkg -i packages-microsoft-prod.deb
+            sudo apt-get update
+            sudo ACCEPT_EULA=Y apt-get install -y msodbcsql18
+          fi
+      - run: pip install -e ".[dev,ui]"
+      - name: Create an empty test database
+        run: |
+          url="$(python .github/scripts/sqlserver_test_database.py)"
+          echo "::add-mask::$url"
+          echo "PD_UI_TEST_DATABASE_URL=$url" >> "$GITHUB_ENV"
+      - name: Migrations apply cleanly to the empty database
+        run: PD_UI_DATABASE_URL="$PD_UI_TEST_DATABASE_URL" pd-ui-migrate
+      - name: Service tests on SQL Server
+        run: python -m pytest tests/ui -v
+
   frontend:
     # The UI's React/TypeScript front end (ui/): typecheck, build, and audit.
     runs-on: ubuntu-latest
