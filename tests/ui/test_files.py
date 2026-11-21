@@ -4,7 +4,7 @@
 import hashlib
 import json
 
-from conftest import OPERATOR, VIEWER
+from conftest import OPERATOR, VIEWER, finished
 
 
 def sha(data: bytes) -> str:
@@ -25,8 +25,9 @@ def run_values(client, values, files=None, command="ui-fixture", subcommand=None
 # ---------- argv is built on the server from the form's values ----------
 
 def test_values_become_the_commands_arguments(client):
-    created = run_values(client, {"text": "hi", "exit_code": 1, "verbose": True,
-                                  "status": ["open", "closed"]}).json()
+    created = finished(client, run_values(client, {"text": "hi", "exit_code": 1,
+                                                   "verbose": True,
+                                                   "status": ["open", "closed"]}))
     # Emitted in the parser's own order, with the long flag names.
     assert created["argv"] == ["--verbose", "--print", "hi", "--exit-code", "1",
                                "--status", "open", "--status", "closed"]
@@ -44,7 +45,8 @@ def test_values_go_through_the_same_gate_as_arguments(client):
 
 
 def test_subcommand_values(client):
-    created = run_values(client, {}, command="ui-subcommands", subcommand="report").json()
+    created = finished(client, run_values(client, {}, command="ui-subcommands",
+                                          subcommand="report"))
     assert (created["argv"], created["stdout"]) == (["report"], "report\n")
     refused = run_values(client, {}, command="ui-subcommands", subcommand="apply")
     assert refused.status_code == 403
@@ -54,8 +56,9 @@ def test_subcommand_values(client):
 
 def test_uploaded_input_and_written_output_are_stored_with_hashes(client):
     data = b"service_id\nP1\n"
-    created = run_values(client, {"output": "out.txt"},
-                         files=[("file.input", ("services.csv", data, "text/csv"))]).json()
+    created = finished(client, run_values(
+        client, {"output": "out.txt"},
+        files=[("file.input", ("services.csv", data, "text/csv"))]))
     assert created["outcome"] == "succeeded"
     assert created["argv"] == ["--output", "out.txt", "--input", "inputs/input/services.csv"]
     assert created["stdout"] == data.decode()
@@ -73,10 +76,10 @@ def test_uploaded_input_and_written_output_are_stored_with_hashes(client):
 
 
 def test_an_input_directory_takes_several_files(client):
-    created = run_values(client, {}, files=[
+    created = finished(client, run_values(client, {}, files=[
         ("file.input_dir", ("a.json", b"{}", "application/json")),
         ("file.input_dir", ("b.json", b"[]", "application/json")),
-    ]).json()
+    ]))
     assert created["stdout"] == "a.json,b.json\n"
     assert created["argv"] == ["--input-dir", "inputs/input_dir"]
 
@@ -107,7 +110,7 @@ def test_a_refused_run_leaves_nothing_behind(client, settings):
 
 
 def test_a_file_changed_after_the_run_is_not_served(client, settings):
-    created = run_values(client, {"output": "out.txt"}).json()
+    created = finished(client, run_values(client, {"output": "out.txt"}))
     written = next(f for f in created["files"] if f["path"] == "out.txt")
     (settings.run_root / created["id"] / "out.txt").write_text("tampered\n", "utf-8")
     response = client.get(f"/api/runs/{created['id']}/files/{written['id']}", headers=VIEWER)
@@ -115,8 +118,8 @@ def test_a_file_changed_after_the_run_is_not_served(client, settings):
 
 
 def test_files_are_only_served_from_their_own_run(client):
-    first = run_values(client, {"output": "out.txt"}).json()
-    second = run_values(client, {"text": "x"}).json()
+    first = finished(client, run_values(client, {"output": "out.txt"}))
+    second = finished(client, run_values(client, {"text": "x"}))
     file_id = first["files"][0]["id"]
     assert client.get(f"/api/runs/{second['id']}/files/{file_id}",
                       headers=VIEWER).status_code == 404
@@ -126,10 +129,11 @@ def test_files_are_only_served_from_their_own_run(client):
 # ---------- a usage error is shown with the command's own message ----------
 
 def test_a_usage_error_carries_the_commands_message(client):
-    created = run_values(client, {"exit_code": 2, "log": "Error: CSV missing columns"}).json()
+    created = finished(client, run_values(client, {"exit_code": 2,
+                                                   "log": "Error: CSV missing columns"}))
     assert created["outcome"] == "usage-error"
     assert created["message"] == "Error: CSV missing columns"
-    assert run_values(client, {"text": "ok"}).json()["message"] is None
+    assert finished(client, run_values(client, {"text": "ok"}))["message"] is None
 
 
 def test_outputs_may_not_be_written_over_the_uploaded_inputs(client, settings):

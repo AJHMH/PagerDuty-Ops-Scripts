@@ -53,6 +53,8 @@ argparse can't say which arguments are files, so `FILE_ROLES` in `forms.py` name
 
 ## Running a command
 
+Runs execute in the background (#74). `POST /api/runs` returns the Run at once (201), with `status: "running"`. The UI re-reads it with `GET /api/runs/{id}` until `status` is `"finished"`; only then are `outcome`, the output and the hashes set. Reports and dry runs never wait: each starts on its own thread.
+
 `POST /api/runs` takes `{command, subcommand, values}`, either as JSON or as multipart with a `run` JSON part and `file.<field>` upload parts. Raw `{command, argv}` is still accepted.
 - **The command line:** the service builds it from the form, in the parser's order, with long flag names. Values for fields the form doesn't offer are refused.
 - **Uploads:** each upload is reduced to a plain file name and saved as `inputs/<field>/<name>` in the Run's directory.
@@ -92,11 +94,21 @@ A `[dry-run]` line whose verb isn't recognised counts as an "other change", unle
 2. **Apply.** That admin applies it with `POST /api/runs/{id}/apply`. The apply takes no new inputs: it reuses the dry run's command, arguments and uploaded files.
    - **Inputs:** each uploaded file is re-verified against its recorded hash. A changed file refuses the apply (409).
    - **Irreversible operations:** checked with the engine's `assess()`, and refused (403) until Approvals arrive in Phase 3 (#77).
-   - **Fresh dry run:** a fresh dry run of the same inputs runs and is stored. If it doesn't succeed, or its `output_hash` differs from the reviewed one, nothing is applied. The response is 409 with `fresh_dry_run_id`, and that new dry run must be reviewed instead.
-   - **The command line:** only then is the apply run, with the mode-neutral argv plus `-y`, or `--apply -y` for diff-first commands. `-y` is added only after every gate has passed. The apply is stored with `kind: "apply"` and `applied_from`.
+   - **The queue:** the apply is stored with `kind: "apply"`, `applied_from` and `status: "queued"`, and returned at once (201). It waits for the one writing slot (below).
+   - **Fresh dry run:** in its turn, inside the slot, a fresh dry run of the same inputs runs and is stored; the apply records it as `fresh_dry_run_id`. If it doesn't succeed, nothing is applied (`failed`). If its `output_hash` differs from the reviewed one, nothing is applied either: the outcome is `changed`, and that new dry run must be reviewed instead. Either way the reviewed dry run can be applied again.
+   - **The command line:** only then is the apply run, with the mode-neutral argv plus `-y`, or `--apply -y` for diff-first commands. `-y` is added only after every gate has passed.
    - **Once only:** a dry run is applied at most once. An atomic claim on `applied_run_id` covers concurrent requests too.
 
-The writing-run queue, timeouts on the Phase 2 scale, and cancellation are #74. Cap overrides are #75.
+Cap overrides are #75.
+
+## One writing Run at a time (#74, ADR 0012)
+
+- **The queue.** Only one apply executes at a time across the account; the others wait, oldest first. Reports and dry runs never wait. The queue is the `queued` rows of the Run store, so it survives a restart. `GET /api/queue` (any role) returns `{executing, pending}`, and the home page shows it.
+- **One process.** The single writer thread is what keeps applies apart, so the service must run as one process: `pd-ui` starts one uvicorn worker. Don't add workers (see ADR 0012's consequences).
+- **Timeouts.** Every Run is killed at its timeout: 2 hours, or the command's declared `timeout_minutes`. The whole process tree is killed: the Run leads its own process group on Linux, and runs in a Job Object on Windows, which also holds processes whose parent has exited. The same kill runs when a command finishes, so a Run never leaves processes behind.
+- **Cancel.** `POST /api/runs/{id}/cancel`: the requester can cancel their own Run, and an Approver can cancel anyone's (others get 403; a finished Run, 409). A queued apply is taken off the queue without running. An executing Run is killed; cancelling an apply's fresh dry run cancels the apply, before anything is written. A cancel that arrives as the Run finishes is refused (409) rather than recorded on a finished Run. `cancelled_by` records who.
+- **Stopped.** A cancelled or timed-out Run is recorded as `stopped`, with the reason in its `message`. A Stopped apply may have been partly applied, so its page offers `POST /api/runs/{id}/fresh-dry-run`: a new dry run of the same command, arguments and inputs, by the admin who requested the apply. Applies are idempotent, so applying that dry run is safe.
+- **Restarts.** At startup, whatever was executing is recorded as Stopped, because a restart cut it off. If the service died without shutting down, its Runs' processes must not keep writing: on Windows the OS kills each Run's Job Object with the service; on Linux the service records each Run's process group and kills any left over at startup, after checking from `/proc` that the process is still a Run. The writer retries with backoff after a database error, so an outage doesn't stop applies until a restart. Queued applies stay queued and resume in order; each still runs its fresh dry run first. A clean shutdown stops what is executing and leaves the queue as it is; an apply still in its fresh dry run goes back to the queue, since it hasn't written anything.
 
 ## Cross-site requests
 
@@ -165,7 +177,7 @@ For front-end work, `npm --prefix ui run dev` serves the UI with hot reload and 
 ## Tests
 
 `tests/ui/` drives the HTTP API in-process with FastAPI's `TestClient`:
-- **Real Runs:** Runs are real subprocesses of test-only fixture commands (`tests/ui/fixture_*.py`).
+- **Real Runs:** Runs are real subprocesses of test-only fixture commands (`tests/ui/fixture_*.py`). Runs finish in the background, so tests wait for them with `wait()`/`finished()` from `conftest.py`.
 - **Test sign-in:** a header-based test identity provider stands in for Okta.
 - **Database:** SQLite, through the production database layer.
 
@@ -178,5 +190,5 @@ These are later tickets:
 - Run history search (#69);
 - the SQL Server CI job and migrations (#70);
 - the Windows host packaging (#71);
-- the rest of Phase 2: the writing-run queue and cancellation (#74), cap overrides (#75), and the Ledger and 90-day purge (#76);
+- the rest of Phase 2: cap overrides (#75), and the Ledger and 90-day purge (#76);
 - Phase 3: Approvals (#77) and what follows them.

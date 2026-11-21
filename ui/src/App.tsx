@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
+import { QueuePanel } from "./QueuePanel";
 import { RunForm } from "./RunForm";
 import { RunPage } from "./RunPage";
 
@@ -51,7 +52,7 @@ export function App() {
         <span>{session.me.name} · {session.me.role} · <a href="/auth/logout">Sign out</a></span>
       </header>
       <main>{runMatch ? <RunPage id={decodeURIComponent(runMatch[1])} me={session.me} />
-        : <RunForm role={session.me.role} />}</main>
+        : <><RunForm role={session.me.role} /><QueuePanel /></>}</main>
     </>
   );
 }

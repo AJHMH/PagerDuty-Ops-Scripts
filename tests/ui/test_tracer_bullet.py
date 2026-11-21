@@ -1,7 +1,7 @@
 """#66 tracer bullet: sign in, run a read-only command, see the Run (Seam B: the HTTP API)."""
 
 import pytest
-from conftest import APPROVER, NO_ROLE, OPERATOR, SECRET, VIEWER
+from conftest import APPROVER, NO_ROLE, OPERATOR, SECRET, VIEWER, finished
 
 # ---------- signing in and roles ----------
 
@@ -28,9 +28,7 @@ def run(client, argv, headers=VIEWER, command="ui-fixture"):
 
 
 def test_viewer_runs_a_read_only_command_and_sees_the_run(client):
-    response = run(client, ["--print", "hello", "--log", "working"])
-    assert response.status_code == 201
-    created = response.json()
+    created = finished(client, run(client, ["--print", "hello", "--log", "working"]))
     assert created["outcome"] == "succeeded"
     assert created["exit_code"] == 0
     assert created["stdout"] == "hello\n"
@@ -50,10 +48,10 @@ def test_unknown_run_is_404(client):
 
 
 def test_exit_codes_map_to_outcomes(client):
-    outcomes = {code: run(client, ["--exit-code", str(code)]).json()["outcome"]
+    outcomes = {code: finished(client, run(client, ["--exit-code", str(code)]))["outcome"]
                 for code in (0, 1, 3, 9)}
     assert outcomes == {0: "succeeded", 1: "failed", 3: "auth-error", 9: "failed"}
-    usage = run(client, ["--exit-code", "2"]).json()
+    usage = finished(client, run(client, ["--exit-code", "2"]))
     assert (usage["exit_code"], usage["outcome"]) == (2, "usage-error")
 
 
@@ -68,8 +66,8 @@ def test_a_viewer_cannot_run_a_command_that_writes(client):
 
 
 def test_a_read_only_subcommand_of_a_writing_command_runs(client):
-    report = run(client, ["report"], command="ui-subcommands")
-    assert (report.status_code, report.json()["stdout"]) == (201, "report\n")
+    report = finished(client, run(client, ["report"], command="ui-subcommands"))
+    assert report["stdout"] == "report\n"
     assert run(client, ["apply", "--dry-run"], command="ui-subcommands").status_code == 403
 
 
@@ -115,7 +113,7 @@ def test_paths_outside_the_run_directory_are_refused(client, path):
 # ---------- secrets (ADRs 0006, 0008) ----------
 
 def test_secrets_reach_the_run_only_through_its_environment_and_are_redacted(client):
-    created = run(client, ["--print-env", "PD_API_TOKEN"]).json()
+    created = finished(client, run(client, ["--print-env", "PD_API_TOKEN"]))
     assert created["outcome"] == "succeeded"
     assert created["stdout"] == "[redacted]\n"       # the child really had the secret...
     stored = client.get(f"/api/runs/{created['id']}", headers=VIEWER).text
@@ -124,7 +122,7 @@ def test_secrets_reach_the_run_only_through_its_environment_and_are_redacted(cli
 
 def test_the_service_environment_does_not_leak_into_runs(client, monkeypatch):
     monkeypatch.setenv("SOME_OTHER_SECRET", "leaked-value")
-    created = run(client, ["--print-env", "SOME_OTHER_SECRET"]).json()
+    created = finished(client, run(client, ["--print-env", "SOME_OTHER_SECRET"]))
     assert created["stdout"] == "<unset>\n"
 
 
@@ -166,7 +164,7 @@ def test_the_built_front_end_is_served_beside_the_api(settings, catalog, tmp_pat
 
 def test_a_run_that_outlives_its_timeout_is_stopped(client, settings):
     settings.run_timeout_seconds = 1
-    created = run(client, ["--sleep", "5"]).json()
+    created = finished(client, run(client, ["--sleep", "5"]))
     assert created["outcome"] == "stopped"
     assert created["exit_code"] is None
 
@@ -175,6 +173,6 @@ def test_the_stored_log_has_the_same_line_endings_on_every_platform(client):
     # On Windows the engine's stderr turns each "\n" into CRLF; the stored log is display
     # text, so it is normalised back to LF. (Proven on the Windows CI job.) stdout is data:
     # cli.run() writes it untranslated, so it stays byte-exact on every platform.
-    created = run(client, ["--log", "first\nsecond", "--print", "a\r\nb"]).json()
+    created = finished(client, run(client, ["--log", "first\nsecond", "--print", "a\r\nb"]))
     assert created["stderr"] == "first\nsecond\n"
     assert created["stdout"] == "a\r\nb\n"

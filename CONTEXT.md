@@ -60,8 +60,12 @@ A Run of a command that can change PagerDuty or ServiceNow and is not a dry run;
 _Avoid_: Write job, mutation
 
 **Stopped**:
-The outcome of an apply that was cancelled or timed out, which may have been partly applied.
+The outcome of a Run that was cancelled or timed out. A Stopped apply may have been partly applied.
 _Avoid_: Aborted, killed, failed (failed means the command itself reported failures)
+
+**Changed**:
+The outcome of an apply whose fresh dry run no longer matched the reviewed dry run, so nothing was applied; the fresh dry run is reviewed instead.
+_Avoid_: Drifted, conflict, failed
 
 **Ledger**:
 The permanent record of who requested and approved each Writing run, kept after the Run itself is purged.

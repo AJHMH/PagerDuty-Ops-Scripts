@@ -3,6 +3,7 @@ provider, SQLite through the production database layer, and real subprocess Runs
 
 import json
 import os
+import time
 from pathlib import Path
 
 import pytest
@@ -71,3 +72,29 @@ def client(settings, catalog, monkeypatch):
     # The front end sends this on every request; see test_csrf in test_apply.py.
     with TestClient(app, headers={"X-PD-Ops-Request": "1"}) as c:
         yield c
+
+
+def wait(client, run_id, headers=None, timeout=30.0):
+    """Runs execute in the background (#74): poll the Run until it has finished."""
+    deadline = time.monotonic() + timeout
+    while True:
+        run = client.get(f"/api/runs/{run_id}", headers=headers or APPROVER).json()
+        if run["status"] == "finished":
+            return run
+        if time.monotonic() > deadline:
+            raise AssertionError(f"Run {run_id} still {run['status']} after {timeout}s")
+        time.sleep(0.05)
+
+
+def finished(client, response, headers=None):
+    """The Run a successful POST started, once it has finished in the background."""
+    assert response.status_code == 201, response.text
+    return wait(client, response.json()["id"], headers)
+
+
+def wait_until(predicate, timeout=30.0):
+    deadline = time.monotonic() + timeout
+    while not predicate():
+        if time.monotonic() > deadline:
+            raise AssertionError("condition not met in time")
+        time.sleep(0.05)

@@ -14,6 +14,7 @@ from .settings import Settings
 
 def main() -> None:
     settings = Settings.from_env()
+    # One process only: its single writer thread is what keeps applies apart (ADR 0012).
     uvicorn.run(
         create_app(settings),
         host="127.0.0.1",

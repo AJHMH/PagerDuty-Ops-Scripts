@@ -3,7 +3,7 @@
 import json
 import shutil
 import uuid
-from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from typing import Annotated
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -15,14 +15,14 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import files as run_files
 from .catalog import describe, engine_catalog
+from .executor import Executor, InputChanged, Requester, copy_inputs, new_run
 from .forms import BadValues, build_argv, form_for
 from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
-from .review import MODE_FLAGS, input_hash, output_hash
+from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
-from .runner import run_command
 from .settings import Settings
-from .store import RunFile, RunRecord, RunStore
+from .store import FINISHED, QUEUED, RunFile, RunRecord, RunStore
 
 # Every state-changing API request must carry this header. A browser can't add a custom
 # header to a cross-origin request without a CORS preflight, which this API never grants, so
@@ -81,13 +81,21 @@ async def read_run_request(request: Request, max_upload_bytes: int, max_request_
     return body, uploads
 
 
-def _now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
 def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                catalog=None) -> FastAPI:
-    app = FastAPI(title="PagerDuty Ops", docs_url=None, redoc_url=None)
+    catalog = engine_catalog() if catalog is None else catalog
+    store = RunStore(settings.database_url)
+    executor = Executor(store, settings, catalog)
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        executor.start()  # Stopped for what a restart cut off; the queue resumes
+        try:
+            yield
+        finally:
+            await run_in_threadpool(executor.stop)
+
+    app = FastAPI(title="PagerDuty Ops", docs_url=None, redoc_url=None, lifespan=lifespan)
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret,
                        https_only=True, same_site="lax", max_age=SESSION_MAX_AGE_SECONDS)
     if identity is None:
@@ -102,8 +110,6 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                 and request.headers.get(UI_REQUEST_HEADER) != "1"):
             return JSONResponse({"detail": f"Missing {UI_REQUEST_HEADER} header."}, 403)
         return await call_next(request)
-    catalog = engine_catalog() if catalog is None else catalog
-    store = RunStore(settings.database_url)
 
     def signed_in(request: Request) -> tuple[Admin, Role]:
         admin = identity.current(request)
@@ -167,28 +173,21 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         except BaseException:
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
-        return await execute(entry, argv, run_id, run_dir, inputs, admin, role,
-                             kind="dry-run" if verdict.writes else "report",
-                             timeout_minutes=verdict.timeout_minutes)
+        return start_now(new_run(run_id, entry.name, argv,
+                                 "dry-run" if verdict.writes else "report",
+                                 Requester(admin.email, admin.name, role.label), inputs,
+                                 timeout_seconds=timeout_for(verdict)), inputs)
 
-    async def execute(entry, argv, run_id, run_dir, inputs, admin, role, *, kind,
-                      timeout_minutes=None, applied_from=None) -> dict:
-        """Run the command in its own process and store the Run with its files."""
-        started = _now()
-        timeout = timeout_minutes * 60 if timeout_minutes else settings.run_timeout_seconds
-        result = await run_in_threadpool(
-            run_command, entry, argv, cwd=run_dir, extra_env=settings.extra_env,
-            secret_env=settings.secret_env, timeout=timeout)
-        outputs = await run_in_threadpool(run_files.collect_outputs, run_dir, inputs)
-        return store.save(RunRecord(
-            id=run_id, command=entry.name, argv=argv, requested_by=admin.email,
-            requester_name=admin.name, requester_role=role.label, started_at=started,
-            finished_at=_now(), exit_code=result.exit_code, outcome=result.outcome,
-            stdout=result.stdout, stderr=result.stderr, kind=kind, applied_from=applied_from,
-            input_hash=input_hash(entry.name, argv, [(f.path, f.sha256) for f in inputs]),
-            output_hash=output_hash(result.stdout, result.stderr,
-                                    [(f.path, f.sha256) for f in outputs])),
-            inputs + outputs)
+    def timeout_for(verdict) -> int:
+        """2 hours, or the command's declared timeout (ADRs 0010, 0012)."""
+        return (verdict.timeout_minutes * 60 if verdict.timeout_minutes
+                else settings.run_timeout_seconds)
+
+    def start_now(run: RunRecord, inputs: list[RunFile]) -> dict:
+        """Store a report or dry run and start it in the background (it never queues)."""
+        stored = store.save(run, inputs)
+        executor.submit(stored["id"])
+        return stored
 
     def own_dry_run(run_id: str, admin: Admin, role: Role, action: str) -> dict:
         if role < Role.OPERATOR:
@@ -213,25 +212,18 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         store.mark_reviewed(run_id, admin.email)
         return store.get(run_id)
 
-    def copy_inputs(source_dir, target_dir, inputs: list[dict]) -> list[RunFile]:
-        """The reviewed dry run's uploads, verified unchanged, copied into a new Run."""
-        records = []
-        for f in inputs:
-            source = run_files.resolve(source_dir, f["path"])
-            if not source.is_file() or run_files.sha256_file(source) != f["sha256"]:
-                raise HTTPException(409, f"The input {f['path']} has changed since the dry "
-                                         "run was reviewed; run a new dry run.")
-            target = target_dir / source.relative_to(source_dir.resolve())
-            target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(source, target)
-            records.append(RunFile(role="input", path=f["path"], size=f["size"],
-                                   sha256=f["sha256"]))
-        return records
+    def copied_inputs(source_id: str, target_id: str) -> list[RunFile]:
+        try:
+            return copy_inputs(settings.run_root / source_id, settings.run_root / target_id,
+                               store.files(source_id, "input"))
+        except InputChanged as e:
+            raise HTTPException(409, f"{e} Run a new dry run.") from None
 
     @app.post("/api/runs/{run_id}/apply", status_code=201)
-    async def apply_run(run_id: str, who: SignedIn):
-        """Apply a reviewed dry run: same command, arguments and inputs (ADR 0003). A fresh
-        dry run first must produce the reviewed output, or nothing is applied (ADR 0011)."""
+    def apply_run(run_id: str, who: SignedIn):
+        """Queue the apply of a reviewed dry run: same command, arguments and inputs (ADR
+        0003). In its turn, a fresh dry run must first produce the reviewed output, or
+        nothing is applied (ADRs 0011, 0012)."""
         admin, role = who
         dry = own_dry_run(run_id, admin, role, "apply")
         if dry["reviewed_by"] != admin.email:
@@ -240,41 +232,70 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         entry = catalog.get(dry["command"])
         if entry is None:
             raise HTTPException(404, f"Unknown command {dry['command']!r}.")
-        dry_dir = settings.run_root / run_id
-        inputs = [f for f in dry["files"] if f["role"] == "input"]
         neutral = [a for a in dry["argv"] if a not in MODE_FLAGS]
         apply_id = str(uuid.uuid4())
         if not store.claim_apply(run_id, apply_id):  # atomic: at most one apply, even racing
             raise HTTPException(409, "This dry run has already been applied.")
         try:
-            dry_argv, apply_argv, verdict = gate_apply(entry, neutral, dry_dir,
-                                                       settings.secret_env.values())
-            fresh_id = str(uuid.uuid4())
-            fresh_dir = settings.run_root / fresh_id
-            fresh_dir.mkdir(parents=True)
-            fresh = await execute(entry, dry_argv, fresh_id, fresh_dir,
-                                  copy_inputs(dry_dir, fresh_dir, inputs), admin, role,
-                                  kind="dry-run", timeout_minutes=verdict.timeout_minutes)
-            if fresh["outcome"] != "succeeded" or fresh["output_hash"] != dry["output_hash"]:
-                raise HTTPException(409, {
-                    "message": "What this would change has changed since you reviewed it, "
-                               "so nothing was applied. Review the fresh dry run.",
-                    "fresh_dry_run_id": fresh_id})
-            apply_dir = settings.run_root / apply_id
-            apply_dir.mkdir(parents=True)
-            apply_inputs = copy_inputs(dry_dir, apply_dir, inputs)
+            _, apply_argv, verdict = gate_apply(entry, neutral, settings.run_root / run_id,
+                                                settings.secret_env.values())
+            inputs = copied_inputs(run_id, apply_id)
+            queued = store.save(new_run(
+                apply_id, entry.name, apply_argv, "apply",
+                Requester(admin.email, admin.name, role.label), inputs,
+                timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id),
+                inputs)
         except BaseException:
             store.release_apply(run_id, apply_id)
+            shutil.rmtree(settings.run_root / apply_id, ignore_errors=True)
             raise
-        try:
-            return await execute(entry, apply_argv, apply_id, apply_dir, apply_inputs, admin,
-                                 role, kind="apply", timeout_minutes=verdict.timeout_minutes,
-                                 applied_from=run_id)
-        except BaseException:
-            # No apply Run was recorded: free the dry run so it can be applied again (engine
-            # applies are idempotent, so a retry after a partial apply is safe).
-            store.release_apply(run_id, apply_id)
-            raise
+        executor.wake_writer()
+        return queued
+
+    @app.post("/api/runs/{run_id}/cancel")
+    def cancel_run(run_id: str, who: SignedIn):
+        """The requester can cancel their own Run; an Approver can cancel anyone's."""
+        admin, role = who
+        run = store.get(run_id)
+        if run is None:
+            raise HTTPException(404, "No such Run.")
+        if run["requested_by"] != admin.email and role < Role.APPROVER:
+            raise HTTPException(403, "Only the admin who requested this Run, or an Approver, "
+                                     "can cancel it.")
+        if run["status"] == FINISHED or not executor.cancel(run_id, admin.email):
+            raise HTTPException(409, "This Run has already finished, or is already being "
+                                     "cancelled.")
+        return store.get(run_id)
+
+    @app.post("/api/runs/{run_id}/fresh-dry-run", status_code=201)
+    def fresh_dry_run(run_id: str, who: SignedIn):
+        """After a Stopped apply, dry-run the same command and inputs again to show what
+        remains (safe because applies are idempotent, ADR 0012)."""
+        admin, role = who
+        if role < Role.OPERATOR:
+            raise HTTPException(403, "Only Operators and Approvers can run dry runs.")
+        stopped = store.get(run_id)
+        if stopped is None:
+            raise HTTPException(404, "No such Run.")
+        if stopped["kind"] != "apply" or stopped["outcome"] != "stopped":
+            raise HTTPException(409, "Only a Stopped apply offers a fresh dry run.")
+        if stopped["requested_by"] != admin.email:
+            raise HTTPException(403, "Only the admin who requested this apply can dry-run "
+                                     "it again.")
+        dry = store.record(stopped["applied_from"])
+        entry = catalog.get(dry.command)
+        if entry is None:
+            raise HTTPException(404, f"Unknown command {dry.command!r}.")
+        fresh_id = str(uuid.uuid4())
+        inputs = copied_inputs(dry.id, fresh_id)
+        return start_now(new_run(fresh_id, entry.name, list(dry.argv), "dry-run",
+                                 Requester(admin.email, admin.name, role.label), inputs,
+                                 timeout_seconds=dry.timeout_seconds), inputs)
+
+    @app.get("/api/queue")
+    def queue(who: SignedIn):
+        """The Writing run executing now, and those waiting for it, oldest first."""
+        return store.queue()
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, who: SignedIn):

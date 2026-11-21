@@ -1,7 +1,7 @@
 """#72 dry runs of writing commands, with a review of the diff (ADRs 0003, 0010, 0011).
 Seam B: the HTTP API with real subprocess Runs of test-only fixture commands."""
 
-from conftest import APPROVER, OPERATOR, VIEWER
+from conftest import APPROVER, OPERATOR, VIEWER, finished
 
 
 def run(client, command, argv=None, values=None, headers=OPERATOR, subcommand=None):
@@ -19,7 +19,7 @@ def run(client, command, argv=None, values=None, headers=OPERATOR, subcommand=No
 
 def test_operator_and_approver_dry_run_a_writing_command(client):
     for headers in (OPERATOR, APPROVER):
-        created = run(client, "ui-writer", values={}, headers=headers).json()
+        created = finished(client, run(client, "ui-writer", values={}, headers=headers))
         assert created["kind"] == "dry-run"
         assert created["argv"] == ["--dry-run"]
         assert created["outcome"] == "succeeded"
@@ -33,12 +33,12 @@ def test_a_viewer_cannot_dry_run_a_writing_command(client):
 
 
 def test_dry_run_flag_already_present_is_not_doubled(client):
-    created = run(client, "ui-writer", argv=["--dry-run"]).json()
+    created = finished(client, run(client, "ui-writer", argv=["--dry-run"]))
     assert created["argv"] == ["--dry-run"]
 
 
 def test_a_diff_first_command_runs_without_apply(client):
-    created = run(client, "ui-differ", values={}).json()
+    created = finished(client, run(client, "ui-differ", values={}))
     assert (created["kind"], created["argv"], created["stdout"]) == (
         "dry-run", [], "+ new-template\n")
 
@@ -51,17 +51,18 @@ def test_an_apply_is_refused_for_everyone(client):
 
 
 def test_a_writing_subcommand_is_dry_run_and_a_read_only_one_is_a_report(client):
-    apply = run(client, "ui-subcommands", values={}, subcommand="apply").json()
+    apply = finished(client, run(client, "ui-subcommands", values={}, subcommand="apply"))
     assert (apply["kind"], apply["argv"]) == ("dry-run", ["apply", "--dry-run"])
-    report = run(client, "ui-subcommands", values={}, subcommand="report", headers=VIEWER)
-    assert report.json()["kind"] == "report"
-    assert report.json()["review"] is None
+    report = finished(client, run(client, "ui-subcommands", values={}, subcommand="report",
+                                  headers=VIEWER))
+    assert report["kind"] == "report"
+    assert report["review"] is None
 
 
 # ---------- the review: additions, changes and deletions ----------
 
 def test_the_review_classifies_the_diff_from_both_streams(client):
-    created = run(client, "ui-writer", values={"note": "starting"}).json()
+    created = finished(client, run(client, "ui-writer", values={"note": "starting"}))
     review = created["review"]
     assert review["counts"] == {"add": 1, "change": 1, "delete": 2, "other": 0}
     kinds = [(line["kind"], line["text"]) for line in review["lines"]]
@@ -76,58 +77,60 @@ def test_the_review_classifies_the_diff_from_both_streams(client):
 # ---------- hashes for matching a later apply to this dry run (#73) ----------
 
 def test_identical_inputs_have_the_same_input_hash(client):
-    first = run(client, "ui-writer", values={"note": "a"}).json()
-    second = run(client, "ui-writer", values={"note": "a"}).json()
-    other = run(client, "ui-writer", values={"note": "b"}).json()
+    first = finished(client, run(client, "ui-writer", values={"note": "a"}))
+    second = finished(client, run(client, "ui-writer", values={"note": "a"}))
+    other = finished(client, run(client, "ui-writer", values={"note": "b"}))
     assert len(first["input_hash"]) == 64
     assert first["input_hash"] == second["input_hash"] != other["input_hash"]
 
 
 def test_the_output_hash_covers_the_diff_not_the_log_context(client):
-    first = run(client, "ui-writer", values={"note": "a"}).json()
-    other_context = run(client, "ui-writer", values={"note": "b"}).json()
-    other_diff = run(client, "ui-writer", values={"note": "a", "extra_delete": True}).json()
+    first = finished(client, run(client, "ui-writer", values={"note": "a"}))
+    other_context = finished(client, run(client, "ui-writer", values={"note": "b"}))
+    other_diff = finished(client, run(client, "ui-writer",
+                                      values={"note": "a", "extra_delete": True}))
     assert first["output_hash"] == other_context["output_hash"]
     assert first["output_hash"] != other_diff["output_hash"]
 
 
 def test_reports_get_hashes_too(client):
-    created = run(client, "ui-fixture", values={"text": "hi"}, headers=VIEWER).json()
+    created = finished(client, run(client, "ui-fixture", values={"text": "hi"}, headers=VIEWER))
     assert created["kind"] == "report"
     assert len(created["input_hash"]) == len(created["output_hash"]) == 64
 
 
 def test_preview_lines_the_review_cant_classify_still_count_as_changes(client):
-    review = run(client, "ui-writer", values={"only_unrecognised": True}).json()["review"]
+    review = finished(client, run(client, "ui-writer",
+                                  values={"only_unrecognised": True}))["review"]
     assert review["counts"] == {"add": 0, "change": 0, "delete": 0, "other": 1}
     assert review["lines"][0]["kind"] == "other"
 
 
 def test_the_input_hash_is_the_same_whatever_the_mode_flags(client):
     # #73 matches an apply (no --dry-run, with -y) to its reviewed dry run by input hash.
-    plain = run(client, "ui-writer", argv=["--note", "a"]).json()
-    flagged = run(client, "ui-writer", argv=["--note", "a", "--dry-run", "-y"]).json()
+    plain = finished(client, run(client, "ui-writer", argv=["--note", "a"]))
+    flagged = finished(client, run(client, "ui-writer", argv=["--note", "a", "--dry-run", "-y"]))
     assert plain["argv"] == ["--note", "a", "--dry-run"]
     assert plain["input_hash"] == flagged["input_hash"]
 
 
 def test_a_payload_under_a_preview_header_is_shown_and_hashed(client):
-    first = run(client, "ui-writer", values={"payload": "Night"}).json()
+    first = finished(client, run(client, "ui-writer", values={"payload": "Night"}))
     lines = [(line["kind"], line["text"]) for line in first["review"]["lines"]]
     assert lines[0] == ("add", "[dry-run] would POST /alert_grouping_settings with:")
     assert ("detail", '    "name": "Night"') in lines
     assert all(kind != "context" for kind, _ in lines)
-    other = run(client, "ui-writer", values={"payload": "Day"}).json()
+    other = finished(client, run(client, "ui-writer", values={"payload": "Day"}))
     assert first["output_hash"] != other["output_hash"]
 
 
 def test_numbered_preview_lines_are_read_by_their_verb(client):
-    review = run(client, "ui-writer", values={"windows": 2}).json()["review"]
+    review = finished(client, run(client, "ui-writer", values={"windows": 2}))["review"]
     assert review["counts"] == {"add": 2, "change": 0, "delete": 0, "other": 0}
 
 
 def test_a_dry_run_that_did_not_finish_has_an_incomplete_review(client):
-    failed = run(client, "ui-writer", values={"fail": True}).json()
+    failed = finished(client, run(client, "ui-writer", values={"fail": True}))
     assert failed["outcome"] == "failed"
     assert failed["review"]["complete"] is False
-    assert run(client, "ui-writer", values={}).json()["review"]["complete"] is True
+    assert finished(client, run(client, "ui-writer", values={}))["review"]["complete"] is True

@@ -5,6 +5,7 @@ import argparse
 import json
 import os
 import sys
+import time
 
 from pagerduty_ops.cli import add_logging_args, add_token_args
 from pagerduty_ops.risk import writes_with_dry_run
@@ -44,12 +45,14 @@ def main(argv=None) -> int:
         if not args.yes:
             sys.stderr.write("Refusing to write without -y.\n")
             return 2
+        time.sleep(float(os.environ.get("UI_FIXTURE_APPLY_SLEEP", "0")))  # a slow apply
         exit_code = int(os.environ.get("UI_FIXTURE_APPLY_EXIT", "0"))
         if exit_code:
             sys.stderr.write(f"Error: apply failed with exit {exit_code}\n")
             return exit_code
         sys.stdout.write("APPLIED\n")
         return 0
+    time.sleep(float(os.environ.get("UI_FIXTURE_DRY_SLEEP", "0")))  # a slow dry run
     if first_input_line:
         sys.stdout.write(f"~ input: {first_input_line}\n")
     if os.environ.get("UI_FIXTURE_DRIFT"):  # live state changed since the reviewed dry run

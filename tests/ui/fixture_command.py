@@ -6,6 +6,7 @@ through pagerduty_ops.cli.run so stdout/stderr and exit codes are the real ones.
 
 import argparse
 import os
+import subprocess
 import sys
 import time
 
@@ -29,11 +30,21 @@ def build_parser():
     p.add_argument("--input-dir", help="List the files in this directory on stdout.")
     p.add_argument("--status", action="append", help="Repeatable; echoed on stdout.")
     p.add_argument("--sleep", type=float, default=0, help="Sleep this many seconds first.")
+    p.add_argument("--spawn-child", metavar="FILE",
+                   help="Start a grandchild process that writes FILE after 2 seconds, so a "
+                        "test can tell whether the whole process tree was killed.")
     return p
 
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
+    if args.spawn_child:
+        code = ("import sys, time; time.sleep(2); "
+                "open(sys.argv[1], 'w', encoding='utf-8').write('alive')")
+        # Detached from our pipes, so this command can finish while the grandchild lives on.
+        subprocess.Popen([sys.executable, "-c", code, args.spawn_child],  # noqa: S603
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
     if args.sleep:
         time.sleep(args.sleep)
     if args.text:
