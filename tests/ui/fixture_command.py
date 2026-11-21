@@ -30,6 +30,13 @@ def build_parser():
     p.add_argument("--input-dir", help="List the files in this directory on stdout.")
     p.add_argument("--status", action="append", help="Repeatable; echoed on stdout.")
     p.add_argument("--sleep", type=float, default=0, help="Sleep this many seconds first.")
+    p.add_argument("--escape-child", metavar="PIDFILE",
+                   help="Start a process that leaves this Run's process group (POSIX) but keeps "
+                        "stdout open for 30 seconds; write its PID to PIDFILE.")
+    p.add_argument("--slow-log", type=int, default=0, metavar="N",
+                   help="Write N log lines to stderr, 0.4 seconds apart, like a long bulk run.")
+    p.add_argument("--slow-log-env", metavar="NAME",
+                   help="Include this environment variable's value in each slow log line.")
     p.add_argument("--spawn-child", metavar="FILE",
                    help="Start a grandchild process that writes FILE after 2 seconds, so a "
                         "test can tell whether the whole process tree was killed.")
@@ -45,8 +52,19 @@ def main(argv=None) -> int:
         subprocess.Popen([sys.executable, "-c", code, args.spawn_child],  # noqa: S603
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                          stderr=subprocess.DEVNULL)
+    if args.escape_child:
+        escaped = subprocess.Popen(  # noqa: S603 - inherits this process's stdout pipe
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            stdin=subprocess.DEVNULL, start_new_session=os.name != "nt")
+        with open(args.escape_child, "w", encoding="utf-8") as f:
+            f.write(str(escaped.pid))
     if args.sleep:
         time.sleep(args.sleep)
+    secret = os.environ.get(args.slow_log_env, "") if args.slow_log_env else ""
+    for n in range(1, args.slow_log + 1):
+        sys.stderr.write(f"line {n} of {args.slow_log}{' token=' + secret if secret else ''}\n")
+        sys.stderr.flush()
+        time.sleep(0.4)
     if args.text:
         sys.stdout.write(args.text + "\n")
     if args.print_env:

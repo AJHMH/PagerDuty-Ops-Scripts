@@ -55,6 +55,8 @@ argparse can't say which arguments are files, so `FILE_ROLES` in `forms.py` name
 
 Runs execute in the background (#74). `POST /api/runs` returns the Run at once (201), with `status: "running"`. The UI re-reads it with `GET /api/runs/{id}` until `status` is `"finished"`; only then are `outcome`, the output and the hashes set. Reports and dry runs never wait: each starts on its own thread.
 
+**The live log (#68).** While a Run executes, its log (the command's stderr) is stored as it arrives: complete lines only, each normalised to LF and redacted on its own, written at most twice a second, and trimmed to its last 256 KB (with a note saying so) while the Run executes. So `GET /api/runs/{id}` shows the log so far, and the Run page, which re-reads the Run every second, shows it growing and follows the newest line. The output (stdout, which is data) and the hashes are stored when the Run finishes. A finished Run's page shows its whole stored log, and a Run that was cancelled, timed out or cut off by a restart keeps the log it had written. Storing the live log is best-effort: if a write fails, it is logged and retried, and the Run carries on. If a process the command started escapes the Run's process tree and holds its output open, the Run is recorded as failed, with a note, rather than as a success without all of its output.
+
 `POST /api/runs` takes `{command, subcommand, values}`, either as JSON or as multipart with a `run` JSON part and `file.<field>` upload parts. Raw `{command, argv}` is still accepted.
 - **The command line:** the service builds it from the form, in the parser's order, with long flag names. Values for fields the form doesn't offer are refused.
 - **Uploads:** each upload is reduced to a plain file name and saved as `inputs/<field>/<name>` in the Run's directory.
@@ -194,7 +196,6 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 ## Not yet
 
 These are later tickets:
-- the live log (#68);
 - Run history search (#69);
 - the Windows host packaging (#71);
 - the rest of Phase 2: cap overrides (#75), and the Ledger and 90-day purge (#76);

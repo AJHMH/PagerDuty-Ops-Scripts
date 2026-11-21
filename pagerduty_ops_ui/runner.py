@@ -7,6 +7,7 @@ it only through the environment and are redacted from everything captured.
 
 from __future__ import annotations
 
+import logging
 import os
 import signal
 import subprocess
@@ -56,11 +57,6 @@ def child_env(extra_env: dict[str, str], secret_env: dict[str, str]) -> dict[str
     return env
 
 
-def as_log(raw: bytes, secrets) -> str:
-    """stderr is display text: decode, normalise CRLF (Windows) to LF, and redact."""
-    return redact(raw.decode("utf-8", "replace").replace("\r\n", "\n"), secrets)
-
-
 def as_data(raw: bytes, secrets) -> str:
     """stdout is data: decode and redact, but keep it byte-exact otherwise."""
     return redact(raw.decode("utf-8", "replace"), secrets)
@@ -74,28 +70,113 @@ def redact(text: str, secrets) -> str:
 
 
 POLL_SECONDS = 0.2
+LOG_FLUSH_SECONDS = 0.5  # how often a running Run's log is handed on (#68)
+LIVE_LOG_LIMIT = 256 * 1024  # characters of a running Run's log shown; all of it is kept
+TRIMMED = "[Earlier lines are hidden while the Run executes; the whole log is kept.]\n"
+HELD_OPEN = ("Error: the command's output didn't all arrive: a process it started still "
+             "holds it open, so this Run can't be counted as a success.")
+
+log = logging.getLogger(__name__)
 DRAIN_SECONDS = 10  # after a kill, how long to wait for the last of the output
+
+
+def log_line(raw: bytes, secrets) -> str:
+    """A log line is display text: decode, normalise CRLF (Windows) to LF, and redact."""
+    return redact(raw.decode("utf-8", "replace").replace("\r\n", "\n"), secrets)
+
+
+class LiveLog:
+    """The Run's log as it arrives: complete lines, each normalised and redacted on its own,
+    so a secret can't slip out split across two writes (#68).
+
+    `flush()` hands `on_log` the log so far, at most every LOG_FLUSH_SECONDS, trimmed to its
+    last LIVE_LOG_LIMIT characters so a long bulk run stays cheap to store and show while it
+    executes; `text()` is the whole log, stored when the Run finishes. Showing the live log
+    is best-effort: a failed `on_log` is logged and retried, and never stops the Run.
+    """
+
+    def __init__(self, secrets, on_log: Callable[[str], None] | None):
+        self.secrets = list(secrets)
+        self.on_log = on_log
+        self.lines: list[str] = []
+        self.sent = 0
+        self.last_sent = 0.0
+        self.lock = threading.Lock()
+
+    def add(self, raw_line: bytes) -> None:
+        line = log_line(raw_line, self.secrets)
+        with self.lock:
+            self.lines.append(line)
+
+    def text(self) -> str:
+        with self.lock:
+            return "".join(self.lines)
+
+    def _live_text(self) -> str:
+        """The end of the log so far, cut at a line boundary (call holding the lock)."""
+        tail, size = [], 0
+        for line in reversed(self.lines):
+            if size + len(line) > LIVE_LOG_LIMIT and tail:
+                return TRIMMED + "".join(reversed(tail))
+            tail.append(line)
+            size += len(line)
+        return "".join(reversed(tail))
+
+    def flush(self) -> None:
+        if self.on_log is None:
+            return
+        with self.lock:
+            count = len(self.lines)
+            if count == self.sent or time.monotonic() - self.last_sent < LOG_FLUSH_SECONDS:
+                return
+            text = self._live_text()
+            self.last_sent = time.monotonic()
+        try:
+            self.on_log(text)
+        except Exception:  # noqa: BLE001 - the live view is best-effort; the Run goes on
+            log.warning("Couldn't store the live log; will retry", exc_info=True)
+            return
+        self.sent = count
+
+
+def read_all(pipe, chunks: list[bytes]) -> None:
+    chunks.append(pipe.read())
+
+
+def read_lines(pipe, live_log: LiveLog) -> None:
+    for line in iter(pipe.readline, b""):
+        live_log.add(line)
 
 
 def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
                 extra_env: dict[str, str], secret_env: dict[str, str],
                 timeout: float | None = None,
                 cancel: threading.Event | None = None,
-                on_start: Callable[[int], None] | None = None) -> Result:
+                on_start: Callable[[int], None] | None = None,
+                on_log: Callable[[str], None] | None = None) -> Result:
     """Run to completion, or kill the whole process tree at `timeout` seconds or when
     `cancel` is set; either way the outcome is "stopped" (ADR 0012). `on_start` gets the
-    process ID once the process exists."""
+    process ID once the process exists; `on_log` gets the redacted log so far while the
+    command runs (#68)."""
     if cancel is not None and cancel.is_set():  # never start a process that is cancelled
         return Result(exit_code=None, outcome="stopped", stdout="",
                       stderr="[stopped: cancelled]\n", stop_reason="cancelled")
     code = LAUNCHER.format(name=entry.name, module=entry.module, attr=entry.attr)
     secrets = secret_env.values()
+    live_log = LiveLog(secrets, on_log)
+    stdout_chunks: list[bytes] = []
     tree = ProcessTree(
         [sys.executable, "-c", code, *argv],
         cwd=cwd, env=child_env(extra_env, secret_env), stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     process = tree.process
+    readers = [
+        threading.Thread(target=read_all, args=(process.stdout, stdout_chunks), daemon=True),
+        threading.Thread(target=read_lines, args=(process.stderr, live_log), daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
     deadline = None if timeout is None else time.monotonic() + timeout
     stopped = None
     try:
@@ -103,7 +184,7 @@ def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
             on_start(process.pid)
         while True:
             try:
-                stdout, stderr = process.communicate(timeout=POLL_SECONDS)
+                process.wait(timeout=POLL_SECONDS)
                 break
             except subprocess.TimeoutExpired:
                 if cancel is not None and cancel.is_set():
@@ -111,27 +192,44 @@ def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
                 elif deadline is not None and time.monotonic() >= deadline:
                     stopped = f"no result after {timeout:g} seconds"
                 if stopped:
-                    tree.kill()
-                    try:
-                        stdout, stderr = process.communicate(timeout=DRAIN_SECONDS)
-                    except subprocess.TimeoutExpired:  # something still holds the pipes
-                        stdout, stderr = b"", b""
                     break
+                live_log.flush()
     finally:
         # Also on success or an error here (e.g. the service shutting down): a Run must
-        # not leave processes behind.
+        # not leave processes behind, and its pipes then reach their end.
         tree.kill()
+        held_open = drain(readers, (process.stdout, process.stderr))
         tree.close()
+        try:
+            process.wait(timeout=DRAIN_SECONDS)
+        except subprocess.TimeoutExpired:  # killing can finish late (Windows); still Stopped
+            pass
+    stdout = as_data(b"".join(stdout_chunks), secrets)
     if stopped:
-        return Result(exit_code=None, outcome="stopped", stdout=as_data(stdout, secrets),
-                      stderr=as_log(stderr, secrets) + f"\n[stopped: {stopped}]\n",
+        return Result(exit_code=None, outcome="stopped", stdout=stdout,
+                      stderr=live_log.text() + f"\n[stopped: {stopped}]\n",
                       stop_reason=stopped)
-    return Result(
-        exit_code=process.returncode,
-        outcome=outcome_for(process.returncode),
-        stdout=as_data(stdout, secrets),
-        stderr=as_log(stderr, secrets),
-    )
+    if held_open:  # never record a success without all of its output (stdout is data)
+        return Result(exit_code=process.returncode, outcome="failed", stdout=stdout,
+                      stderr=live_log.text() + "\n" + HELD_OPEN + "\n")
+    return Result(exit_code=process.returncode, outcome=outcome_for(process.returncode),
+                  stdout=stdout, stderr=live_log.text())
+
+
+def drain(readers: list[threading.Thread], pipes) -> bool:
+    """Wait (DRAIN_SECONDS in all) for the readers to reach the end of the Run's pipes, and
+    close each pipe whose reader has finished. True if any is still held open, by a process
+    that escaped the Run's process tree: that pipe is left to its daemon reader, because
+    closing it under a blocked read would block this thread too."""
+    deadline = time.monotonic() + DRAIN_SECONDS
+    held_open = False
+    for reader, pipe in zip(readers, pipes, strict=True):
+        reader.join(timeout=max(0.0, deadline - time.monotonic()))
+        if reader.is_alive():
+            held_open = True
+        else:
+            pipe.close()
+    return held_open
 
 
 if os.name == "nt":

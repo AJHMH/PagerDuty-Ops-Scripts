@@ -58,3 +58,6 @@ th, td { text-align: left; padding: 0.35rem 0.75rem 0.35rem 0; border-bottom: 1p
 .diff .detail { color: var(--fg); opacity: 0.85; }
 .steps { margin: 1rem 0; padding: 0.75rem; border: 1px solid var(--line); border-radius: 6px; }
 button.danger { background: var(--bad); }
+
+pre.log { max-height: 32rem; overflow-y: auto; }
+.live { color: var(--accent); font-size: 0.8em; font-weight: 600; }

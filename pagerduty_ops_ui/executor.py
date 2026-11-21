@@ -143,7 +143,8 @@ class Executor:
                              extra_env=self.settings.extra_env,
                              secret_env=self.settings.secret_env,
                              timeout=run.timeout_seconds, cancel=cancel,
-                             on_start=lambda pid: self.store.update(run_id, pid=pid))
+                             on_start=lambda pid: self.store.update(run_id, pid=pid),
+                             on_log=lambda text: self.store.update_log(run_id, text))
         outputs = run_files.collect_outputs(run_dir, inputs)
         values = dict(exit_code=result.exit_code, outcome=result.outcome,
                       stdout=result.stdout, stderr=result.stderr,
