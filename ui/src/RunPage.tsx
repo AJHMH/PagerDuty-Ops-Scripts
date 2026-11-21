@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { applyRun, cancelRun, fileUrl, freshDryRun, getRun, reviewRun, type Me,
   type Outcome, type Review, type Run } from "./api";
 
@@ -162,6 +162,30 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
   );
 }
 
+// The command's log. While the Run executes, the service stores each complete line as it
+// arrives (#68) and this page re-reads the Run, so the log grows here. It stays scrolled to
+// the newest line unless the reader has scrolled up to look at something.
+function LiveLog({ text, live }: { text: string; live: boolean }) {
+  const ref = useRef<HTMLPreElement>(null);
+  const following = useRef(true);
+  useLayoutEffect(() => {
+    const pre = ref.current;
+    if (pre && live && following.current) pre.scrollTop = pre.scrollHeight;
+  }, [text, live]);
+  return (
+    <>
+      <h2>Log{live && <span className="live" aria-live="off"> · live</span>}</h2>
+      <pre ref={ref} className="log" aria-busy={live}
+           onScroll={(e) => {
+             const pre = e.currentTarget;
+             following.current = pre.scrollHeight - pre.scrollTop - pre.clientHeight < 24;
+           }}>
+        {text || (live ? "(waiting for the first log line…)" : "(none)")}
+      </pre>
+    </>
+  );
+}
+
 export function RunPage({ id, me }: { id: string; me: Me }) {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState("");
@@ -244,8 +268,7 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
       )}
       <h2>Output</h2>
       <pre>{run.stdout || "(none)"}</pre>
-      <h2>Log</h2>
-      <pre>{run.stderr || "(none)"}</pre>
+      <LiveLog text={run.stderr} live={run.status === "running"} />
       <p><a href="#/">Run another report</a></p>
     </article>
   );

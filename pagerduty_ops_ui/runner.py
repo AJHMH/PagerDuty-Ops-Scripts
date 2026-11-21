@@ -56,11 +56,6 @@ def child_env(extra_env: dict[str, str], secret_env: dict[str, str]) -> dict[str
     return env
 
 
-def as_log(raw: bytes, secrets) -> str:
-    """stderr is display text: decode, normalise CRLF (Windows) to LF, and redact."""
-    return redact(raw.decode("utf-8", "replace").replace("\r\n", "\n"), secrets)
-
-
 def as_data(raw: bytes, secrets) -> str:
     """stdout is data: decode and redact, but keep it byte-exact otherwise."""
     return redact(raw.decode("utf-8", "replace"), secrets)
@@ -74,28 +69,77 @@ def redact(text: str, secrets) -> str:
 
 
 POLL_SECONDS = 0.2
+LOG_FLUSH_SECONDS = 0.5  # how often a running Run's log is handed on (#68)
 DRAIN_SECONDS = 10  # after a kill, how long to wait for the last of the output
+
+
+class LiveLog:
+    """The Run's log as it arrives: complete lines, each normalised (CRLF to LF) and redacted
+    on its own, so a secret can't slip out split across two writes. `on_log` gets the whole
+    log so far, at most every LOG_FLUSH_SECONDS (#68)."""
+
+    def __init__(self, secrets, on_log: Callable[[str], None] | None):
+        self.secrets = list(secrets)
+        self.on_log = on_log
+        self.lines: list[str] = []
+        self.sent = 0
+        self.last_sent = 0.0
+        self.lock = threading.Lock()
+
+    def add(self, raw_line: bytes) -> None:
+        line = redact(raw_line.decode("utf-8", "replace").replace("\r\n", "\n"), self.secrets)
+        with self.lock:
+            self.lines.append(line)
+
+    def text(self) -> str:
+        with self.lock:
+            return "".join(self.lines)
+
+    def flush(self, force: bool = False) -> None:
+        """Hand the log so far to `on_log` if there is something new and it is time."""
+        if self.on_log is None:
+            return
+        with self.lock:
+            count = len(self.lines)
+            due = force or time.monotonic() - self.last_sent >= LOG_FLUSH_SECONDS
+            if count == self.sent or not due:
+                return
+            text = "".join(self.lines)
+            self.sent, self.last_sent = count, time.monotonic()
+        self.on_log(text)
 
 
 def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
                 extra_env: dict[str, str], secret_env: dict[str, str],
                 timeout: float | None = None,
                 cancel: threading.Event | None = None,
-                on_start: Callable[[int], None] | None = None) -> Result:
+                on_start: Callable[[int], None] | None = None,
+                on_log: Callable[[str], None] | None = None) -> Result:
     """Run to completion, or kill the whole process tree at `timeout` seconds or when
     `cancel` is set; either way the outcome is "stopped" (ADR 0012). `on_start` gets the
-    process ID once the process exists."""
+    process ID once the process exists; `on_log` gets the redacted log so far while the
+    command runs (#68)."""
     if cancel is not None and cancel.is_set():  # never start a process that is cancelled
         return Result(exit_code=None, outcome="stopped", stdout="",
                       stderr="[stopped: cancelled]\n", stop_reason="cancelled")
     code = LAUNCHER.format(name=entry.name, module=entry.module, attr=entry.attr)
     secrets = secret_env.values()
+    log = LiveLog(secrets, on_log)
+    stdout_chunks: list[bytes] = []
     tree = ProcessTree(
         [sys.executable, "-c", code, *argv],
         cwd=cwd, env=child_env(extra_env, secret_env), stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE, stderr=subprocess.PIPE,
     )
     process = tree.process
+    readers = [
+        threading.Thread(target=lambda: stdout_chunks.append(process.stdout.read()),
+                         daemon=True),
+        threading.Thread(target=lambda: [log.add(line) for line in
+                                         iter(process.stderr.readline, b"")], daemon=True),
+    ]
+    for reader in readers:
+        reader.start()
     deadline = None if timeout is None else time.monotonic() + timeout
     stopped = None
     try:
@@ -103,7 +147,7 @@ def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
             on_start(process.pid)
         while True:
             try:
-                stdout, stderr = process.communicate(timeout=POLL_SECONDS)
+                process.wait(timeout=POLL_SECONDS)
                 break
             except subprocess.TimeoutExpired:
                 if cancel is not None and cancel.is_set():
@@ -111,27 +155,25 @@ def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
                 elif deadline is not None and time.monotonic() >= deadline:
                     stopped = f"no result after {timeout:g} seconds"
                 if stopped:
-                    tree.kill()
-                    try:
-                        stdout, stderr = process.communicate(timeout=DRAIN_SECONDS)
-                    except subprocess.TimeoutExpired:  # something still holds the pipes
-                        stdout, stderr = b"", b""
                     break
+                log.flush()
     finally:
         # Also on success or an error here (e.g. the service shutting down): a Run must
-        # not leave processes behind.
+        # not leave processes behind, and its pipes then reach their end.
         tree.kill()
+        for reader in readers:
+            reader.join(timeout=DRAIN_SECONDS)
         tree.close()
+        process.stdout.close()
+        process.stderr.close()
     if stopped:
-        return Result(exit_code=None, outcome="stopped", stdout=as_data(stdout, secrets),
-                      stderr=as_log(stderr, secrets) + f"\n[stopped: {stopped}]\n",
-                      stop_reason=stopped)
-    return Result(
-        exit_code=process.returncode,
-        outcome=outcome_for(process.returncode),
-        stdout=as_data(stdout, secrets),
-        stderr=as_log(stderr, secrets),
-    )
+        process.wait(timeout=DRAIN_SECONDS)
+    stdout = as_data(b"".join(stdout_chunks), secrets)
+    if stopped:
+        return Result(exit_code=None, outcome="stopped", stdout=stdout,
+                      stderr=log.text() + f"\n[stopped: {stopped}]\n", stop_reason=stopped)
+    return Result(exit_code=process.returncode, outcome=outcome_for(process.returncode),
+                  stdout=stdout, stderr=log.text())
 
 
 if os.name == "nt":

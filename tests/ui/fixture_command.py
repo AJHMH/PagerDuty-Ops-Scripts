@@ -30,6 +30,10 @@ def build_parser():
     p.add_argument("--input-dir", help="List the files in this directory on stdout.")
     p.add_argument("--status", action="append", help="Repeatable; echoed on stdout.")
     p.add_argument("--sleep", type=float, default=0, help="Sleep this many seconds first.")
+    p.add_argument("--slow-log", type=int, default=0, metavar="N",
+                   help="Write N log lines to stderr, 0.4 seconds apart, like a long bulk run.")
+    p.add_argument("--slow-log-env", metavar="NAME",
+                   help="Include this environment variable's value in each slow log line.")
     p.add_argument("--spawn-child", metavar="FILE",
                    help="Start a grandchild process that writes FILE after 2 seconds, so a "
                         "test can tell whether the whole process tree was killed.")
@@ -47,6 +51,11 @@ def main(argv=None) -> int:
                          stderr=subprocess.DEVNULL)
     if args.sleep:
         time.sleep(args.sleep)
+    secret = os.environ.get(args.slow_log_env, "") if args.slow_log_env else ""
+    for n in range(1, args.slow_log + 1):
+        sys.stderr.write(f"line {n} of {args.slow_log}{' token=' + secret if secret else ''}\n")
+        sys.stderr.flush()
+        time.sleep(0.4)
     if args.text:
         sys.stdout.write(args.text + "\n")
     if args.print_env:

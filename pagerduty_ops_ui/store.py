@@ -203,6 +203,13 @@ class RunStore:
         with Session(self.engine) as session, session.begin():
             session.execute(update(RunRecord).where(RunRecord.id == run_id).values(**values))
 
+    def update_log(self, run_id: str, text: str) -> None:
+        """The log so far of a Run that is still executing (#68); finish() stores the rest."""
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(RunRecord)
+                            .where(RunRecord.id == run_id, RunRecord.status == RUNNING)
+                            .values(stderr=text))
+
     def finish(self, run_id: str, files: list[RunFile] | None = None, **values) -> bool:
         """Record how a running Run ended, with the output files it wrote. False (and
         nothing recorded) if it had already finished."""
