@@ -109,6 +109,22 @@ def test_a_timeout_kills_the_whole_process_tree(client, settings):
     assert not (settings.run_root / created["id"] / "alive.txt").exists()
 
 
+def test_a_finished_command_leaves_no_process_behind(client, settings):
+    created = report(client, ["--spawn-child", "alive.txt"])  # exits at once
+    assert wait(client, created["id"])["outcome"] == "succeeded"
+    time.sleep(3)
+    assert not (settings.run_root / created["id"] / "alive.txt").exists()
+
+
+def test_a_fresh_dry_run_that_times_out_stops_the_apply(client, settings):
+    dry = reviewed_dry_run(client)
+    settings.run_timeout_seconds = 1
+    settings.extra_env["UI_FIXTURE_DRY_SLEEP"] = "10"
+    stopped = wait(client, apply(client, dry["id"])["id"])
+    assert (stopped["outcome"], stopped["stdout"]) == ("stopped", "")
+    assert "Nothing was applied" in stopped["message"]
+
+
 def test_an_apply_that_times_out_is_stopped(client, settings):
     dry = reviewed_dry_run(client)
     settings.run_timeout_seconds = 2
@@ -166,6 +182,50 @@ def test_a_cancelled_apply_is_stopped_and_offers_a_fresh_dry_run(client, setting
                        headers=OTHER_OPERATOR).status_code == 403
 
 
+def test_cancelling_the_fresh_dry_run_stops_the_apply(client, settings):
+    dry = reviewed_dry_run(client)
+    settings.extra_env["UI_FIXTURE_DRY_SLEEP"] = "10"
+    applying = apply(client, dry["id"])
+    wait_until(lambda: get(client, applying["id"])["fresh_dry_run_id"] is not None)
+    fresh_id = get(client, applying["id"])["fresh_dry_run_id"]
+    assert cancel(client, fresh_id, OPERATOR).status_code == 200
+    stopped = wait(client, applying["id"])
+    assert (stopped["outcome"], stopped["stdout"]) == ("stopped", "")  # never applied
+    assert stopped["cancelled_by"] == "ann@dallas.gov"
+    assert wait(client, fresh_id)["outcome"] == "stopped"
+
+
+def test_a_run_cancelled_before_it_starts_never_starts_its_process(tmp_path, catalog,
+                                                                   monkeypatch):
+    import threading
+
+    from conftest import HERE
+
+    from pagerduty_ops_ui.runner import run_command
+
+    monkeypatch.syspath_prepend(str(HERE))
+    cancelled = threading.Event()
+    cancelled.set()
+    result = run_command(catalog["ui-fixture"], ["--output", "out.txt"], cwd=tmp_path,
+                         extra_env={"PYTHONPATH": str(HERE)}, secret_env={}, cancel=cancelled)
+    assert (result.outcome, result.stop_reason) == ("stopped", "cancelled")
+    assert not (tmp_path / "out.txt").exists()
+
+
+def test_a_cancel_is_not_recorded_on_a_run_that_has_finished(settings):
+    from pagerduty_ops_ui.store import RunRecord, RunStore, now
+
+    store = RunStore(settings.database_url)
+    store.save(RunRecord(id="r1", command="ui-fixture", argv=[], requested_by="a@x",
+                         requester_name="A", requester_role="viewer", queued_at=now(),
+                         started_at=now(), timeout_seconds=60, status="running"))
+    store.finish("r1", outcome="succeeded")
+    assert store.request_cancel("r1", "b@x") is False
+    assert store.get("r1")["cancelled_by"] is None
+    store.finish("r1", outcome="failed")  # finishing twice changes nothing
+    assert store.get("r1")["outcome"] == "succeeded"
+
+
 def test_a_queued_apply_that_is_cancelled_never_runs(client, settings):
     first, second = reviewed_dry_run(client), reviewed_dry_run(client)
     settings.extra_env["UI_FIXTURE_APPLY_SLEEP"] = "3"
@@ -207,9 +267,40 @@ def test_a_restart_stops_what_was_executing_and_resumes_the_queue(settings, cata
         db.execute(update(RunRecord).where(RunRecord.id == a["id"])
                    .values(status="running", outcome=None, finished_at=None, stderr=""))
 
+        db.execute(update(RunRecord).where(RunRecord.id == first["id"])
+                   .values(status="running", outcome=None, finished_at=None))
+
     settings.extra_env["UI_FIXTURE_APPLY_SLEEP"] = "0"
     with service() as client:
         a = get(client, a["id"])
         assert (a["status"], a["outcome"]) == ("finished", "stopped")
-        assert "restarted" in a["message"]
+        assert "restarted" in a["message"] and "partly applied" in a["message"]
+        cut_off_dry_run = get(client, first["id"])
+        assert "restarted" in cut_off_dry_run["message"]
+        assert "applied" not in cut_off_dry_run["message"]  # a dry run changes nothing
         assert wait(client, b["id"])["outcome"] == "succeeded"  # the queue resumed
+
+
+def test_a_shutdown_during_the_fresh_check_leaves_the_apply_queued(settings, catalog,
+                                                                    monkeypatch):
+    from conftest import HERE, HeaderIdentity
+    from fastapi.testclient import TestClient
+
+    from pagerduty_ops_ui.app import create_app
+
+    monkeypatch.syspath_prepend(str(HERE))
+
+    def service():
+        app = create_app(settings, identity=HeaderIdentity(), catalog=catalog)
+        return TestClient(app, headers={"X-PD-Ops-Request": "1"})
+
+    with service() as client:
+        dry = reviewed_dry_run(client)
+        settings.extra_env["UI_FIXTURE_DRY_SLEEP"] = "30"
+        a = apply(client, dry["id"])
+        wait_until(lambda: get(client, a["id"])["fresh_dry_run_id"] is not None)
+    # Nothing was applied yet, so the apply goes back to the queue rather than Stopped.
+    settings.extra_env["UI_FIXTURE_DRY_SLEEP"] = "0"
+    with service() as client:
+        resumed = wait(client, a["id"])
+        assert (resumed["outcome"], resumed["stdout"]) == ("succeeded", "APPLIED\n")

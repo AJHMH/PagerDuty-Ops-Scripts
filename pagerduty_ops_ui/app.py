@@ -15,14 +15,14 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import files as run_files
 from .catalog import describe, engine_catalog
-from .executor import Executor, InputChanged, copy_inputs, new_run
+from .executor import Executor, InputChanged, Requester, copy_inputs, new_run
 from .forms import BadValues, build_argv, form_for
 from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
-from .review import MODE_FLAGS, input_hash
+from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .settings import Settings
-from .store import FINISHED, QUEUED, RUNNING, RunFile, RunRecord, RunStore, now
+from .store import FINISHED, QUEUED, RunFile, RunRecord, RunStore
 
 # Every state-changing API request must carry this header. A browser can't add a custom
 # header to a cross-origin request without a CORS preflight, which this API never grants, so
@@ -173,15 +173,15 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         except BaseException:
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
-        timeout = (verdict.timeout_minutes * 60 if verdict.timeout_minutes
-                   else settings.run_timeout_seconds)
-        return start_now(RunRecord(
-            id=run_id, command=entry.name, argv=argv, requested_by=admin.email,
-            requester_name=admin.name, requester_role=role.label, queued_at=now(),
-            started_at=now(), timeout_seconds=timeout, status=RUNNING,
-            kind="dry-run" if verdict.writes else "report",
-            input_hash=input_hash(entry.name, argv, [(f.path, f.sha256) for f in inputs])),
-            inputs)
+        return start_now(new_run(run_id, entry.name, argv,
+                                 "dry-run" if verdict.writes else "report",
+                                 Requester(admin.email, admin.name, role.label), inputs,
+                                 timeout_seconds=timeout_for(verdict)), inputs)
+
+    def timeout_for(verdict) -> int:
+        """2 hours, or the command's declared timeout (ADRs 0010, 0012)."""
+        return (verdict.timeout_minutes * 60 if verdict.timeout_minutes
+                else settings.run_timeout_seconds)
 
     def start_now(run: RunRecord, inputs: list[RunFile]) -> dict:
         """Store a report or dry run and start it in the background (it never queues)."""
@@ -241,15 +241,15 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                                                 settings.secret_env.values())
             inputs = copied_inputs(run_id, apply_id)
             queued = store.save(new_run(
-                apply_id, entry.name, apply_argv, "apply", store.record(run_id), inputs,
-                status=QUEUED, applied_from=run_id,
-                timeout_seconds=(verdict.timeout_minutes * 60 if verdict.timeout_minutes
-                                 else settings.run_timeout_seconds)), inputs)
+                apply_id, entry.name, apply_argv, "apply",
+                Requester(admin.email, admin.name, role.label), inputs,
+                timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id),
+                inputs)
         except BaseException:
             store.release_apply(run_id, apply_id)
             shutil.rmtree(settings.run_root / apply_id, ignore_errors=True)
             raise
-        executor.enqueued()
+        executor.wake_writer()
         return queued
 
     @app.post("/api/runs/{run_id}/cancel")
@@ -262,9 +262,9 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         if run["requested_by"] != admin.email and role < Role.APPROVER:
             raise HTTPException(403, "Only the admin who requested this Run, or an Approver, "
                                      "can cancel it.")
-        if run["status"] == FINISHED:
-            raise HTTPException(409, "This Run has already finished.")
-        executor.cancel(run_id, admin.email)
+        if run["status"] == FINISHED or not executor.cancel(run_id, admin.email):
+            raise HTTPException(409, "This Run has already finished, or is already being "
+                                     "cancelled.")
         return store.get(run_id)
 
     @app.post("/api/runs/{run_id}/fresh-dry-run", status_code=201)
@@ -288,8 +288,9 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             raise HTTPException(404, f"Unknown command {dry.command!r}.")
         fresh_id = str(uuid.uuid4())
         inputs = copied_inputs(dry.id, fresh_id)
-        return start_now(new_run(fresh_id, entry.name, list(dry.argv), "dry-run", dry,
-                                 inputs), inputs)
+        return start_now(new_run(fresh_id, entry.name, list(dry.argv), "dry-run",
+                                 Requester(admin.email, admin.name, role.label), inputs,
+                                 timeout_seconds=dry.timeout_seconds), inputs)
 
     @app.get("/api/queue")
     def queue(who: SignedIn):

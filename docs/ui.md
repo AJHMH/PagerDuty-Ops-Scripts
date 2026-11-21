@@ -104,11 +104,11 @@ Cap overrides are #75.
 ## One writing Run at a time (#74, ADR 0012)
 
 - **The queue.** Only one apply executes at a time across the account; the others wait, oldest first. Reports and dry runs never wait. The queue is the `queued` rows of the Run store, so it survives a restart. `GET /api/queue` (any role) returns `{executing, pending}`, and the home page shows it.
-- **One process.** The single writer thread is what keeps applies apart, so the service must run as one process: `pd-ui` starts one uvicorn worker. Don't add workers.
-- **Timeouts.** Every Run is killed at its timeout: 2 hours, or the command's declared `timeout_minutes`. The whole process tree is killed: the Run leads its own process group on Linux, and `taskkill /T` covers it on Windows.
-- **Cancel.** `POST /api/runs/{id}/cancel`: the requester can cancel their own Run, and an Approver can cancel anyone's (others get 403; a finished Run, 409). A queued apply is taken off the queue without running. An executing Run is killed. `cancelled_by` records who.
+- **One process.** The single writer thread is what keeps applies apart, so the service must run as one process: `pd-ui` starts one uvicorn worker. Don't add workers (see ADR 0012's consequences).
+- **Timeouts.** Every Run is killed at its timeout: 2 hours, or the command's declared `timeout_minutes`. The whole process tree is killed: the Run leads its own process group on Linux, and runs in a Job Object on Windows, which also holds processes whose parent has exited. The same kill runs when a command finishes, so a Run never leaves processes behind.
+- **Cancel.** `POST /api/runs/{id}/cancel`: the requester can cancel their own Run, and an Approver can cancel anyone's (others get 403; a finished Run, 409). A queued apply is taken off the queue without running. An executing Run is killed; cancelling an apply's fresh dry run cancels the apply, before anything is written. A cancel that arrives as the Run finishes is refused (409) rather than recorded on a finished Run. `cancelled_by` records who.
 - **Stopped.** A cancelled or timed-out Run is recorded as `stopped`, with the reason in its `message`. A Stopped apply may have been partly applied, so its page offers `POST /api/runs/{id}/fresh-dry-run`: a new dry run of the same command, arguments and inputs, by the admin who requested the apply. Applies are idempotent, so applying that dry run is safe.
-- **Restarts.** At startup, whatever was executing is recorded as Stopped, because a restart cut it off. Queued applies stay queued and resume in order; each still runs its fresh dry run first. A clean shutdown stops what is executing and leaves the queue as it is.
+- **Restarts.** At startup, whatever was executing is recorded as Stopped, because a restart cut it off. Queued applies stay queued and resume in order; each still runs its fresh dry run first. A clean shutdown stops what is executing and leaves the queue as it is; an apply still in its fresh dry run goes back to the queue, since it hasn't written anything.
 
 ## Cross-site requests
 

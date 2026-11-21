@@ -13,6 +13,7 @@ from __future__ import annotations
 import shutil
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from . import files as run_files
@@ -65,21 +66,25 @@ class Executor:
 
     def submit(self, run_id: str) -> None:
         """Start a report or dry run now, on its own thread."""
-        self._spawn(self._run_free, run_id)
+        self._spawn(self._run_unqueued, run_id)
 
-    def enqueued(self) -> None:
+    def wake_writer(self) -> None:
+        """An apply was queued: let the writer look at the queue now."""
         with self._wake:
             self._wake.notify_all()
 
-    def cancel(self, run_id: str, email: str) -> None:
-        """Stop a Run: a queued one never starts; an executing one is killed."""
+    def cancel(self, run_id: str, email: str) -> bool:
+        """Stop a Run: a queued one never starts; an executing one is killed. False if it
+        had already finished (or was already being cancelled)."""
         if self.store.cancel_queued(run_id, email):
-            return
-        self.store.update(run_id, cancelled_by=email)
+            return True
+        if not self.store.request_cancel(run_id, email):
+            return False
         with self._lock:
             event = self._cancels.get(run_id)
         if event is not None:
             event.set()
+        return True
 
     # ---------- execution ----------
 
@@ -96,10 +101,11 @@ class Executor:
             self._threads.add(thread)
         thread.start()
 
-    def _cancel_event(self, run_id: str) -> threading.Event:
-        """Register the Run's cancel signal. A cancel recorded before it was registered
-        (between the Run starting and this) still counts."""
-        event = threading.Event()
+    def _cancel_event(self, run_id: str, event: threading.Event | None = None
+                      ) -> threading.Event:
+        """Register the Run's cancel signal (an apply's fresh dry run shares the apply's).
+        A cancel recorded before it was registered still counts."""
+        event = event or threading.Event()
         with self._lock:
             self._cancels[run_id] = event
         run = self.store.record(run_id)
@@ -111,7 +117,7 @@ class Executor:
         with self._lock:
             self._cancels.pop(run_id, None)
 
-    def _run_free(self, run_id: str) -> None:
+    def _run_unqueued(self, run_id: str) -> None:
         cancel = self._cancel_event(run_id)
         try:
             self._execute(run_id, cancel)
@@ -154,12 +160,15 @@ class Executor:
     def _write_loop(self) -> None:
         while not self._stopping.is_set():
             run_id = self.store.next_queued()
-            if run_id is None or not self.store.start(run_id):
+            # Registered before the Run starts, so a stop() from here on reaches it.
+            cancel = self._cancel_event(run_id) if run_id else None
+            if run_id is None or self._stopping.is_set() or not self.store.start(run_id):
+                if run_id:
+                    self._forget(run_id)
                 with self._wake:
                     if not self._stopping.is_set():
                         self._wake.wait(IDLE_POLL_SECONDS)
                 continue
-            cancel = self._cancel_event(run_id)
             try:
                 self._apply(run_id, cancel)
             except Exception as e:  # noqa: BLE001 - record it, free the dry run, carry on
@@ -198,15 +207,28 @@ class Executor:
             self._not_applied(apply_id, "changed", f"{e} Nothing was applied; run a new dry "
                                                     "run.")
             return
-        self.store.save(new_run(fresh_id, entry.name, dry_argv, "dry-run", apply,
-                                fresh_inputs), fresh_inputs)
+        self.store.save(new_run(fresh_id, entry.name, dry_argv, "dry-run",
+                                Requester.of(apply), fresh_inputs,
+                                timeout_seconds=apply.timeout_seconds), fresh_inputs)
         self.store.update(apply_id, fresh_dry_run_id=fresh_id)
-        fresh = self._execute(fresh_id, cancel)
+        self._cancel_event(fresh_id, cancel)  # cancelling the check cancels the apply
+        try:
+            fresh = self._execute(fresh_id, cancel)
+        finally:
+            self._forget(fresh_id)
         fresh_record = self.store.record(fresh_id)
 
-        if cancel.is_set():
-            self._not_applied(apply_id, "stopped", self._stop_note(apply_id, fresh)
-                              + " Nothing was applied.")
+        if fresh.outcome == "stopped" or cancel.is_set():
+            cancelled_by = self.store.record(apply_id).cancelled_by or fresh_record.cancelled_by
+            if cancelled_by is None and self._stopping.is_set():
+                self.store.requeue(apply_id)  # nothing was written: it resumes after restart
+                return
+            if cancelled_by:
+                self.store.update(apply_id, cancelled_by=cancelled_by)
+                reason = f"cancelled by {cancelled_by}"
+            else:
+                reason = f"its fresh dry run was stopped ({fresh.stop_reason})"
+            self._not_applied(apply_id, "stopped", f"Stopped: {reason}. Nothing was applied.")
         elif fresh.outcome != "succeeded":
             self._not_applied(apply_id, "failed", "The fresh dry run before the apply didn't "
                                                   "succeed, so nothing was applied. See it "
@@ -224,16 +246,28 @@ class Executor:
             self._release(apply_id)
 
 
-def new_run(run_id: str, command: str, argv: list[str], kind: str, requester, inputs,
-            *, timeout_seconds: int | None = None, status: str = RUNNING,
+@dataclass(frozen=True)
+class Requester:
+    """Who a Run is for, as recorded on it."""
+
+    email: str
+    name: str
+    role: str
+
+    @classmethod
+    def of(cls, run: RunRecord) -> Requester:
+        return cls(run.requested_by, run.requester_name, run.requester_role)
+
+
+def new_run(run_id: str, command: str, argv: list[str], kind: str, requester: Requester,
+            inputs, *, timeout_seconds: int, status: str = RUNNING,
             applied_from: str | None = None) -> RunRecord:
-    """A Run about to execute (or queue), by the same admin as `requester`'s Run."""
+    """A Run about to execute (or, for an apply, to queue)."""
     return RunRecord(
         id=run_id, command=command, argv=argv, kind=kind, status=status,
-        requested_by=requester.requested_by, requester_name=requester.requester_name,
-        requester_role=requester.requester_role, queued_at=now(),
-        started_at=now() if status == RUNNING else None,
-        timeout_seconds=timeout_seconds or requester.timeout_seconds,
+        requested_by=requester.email, requester_name=requester.name,
+        requester_role=requester.role, queued_at=now(),
+        started_at=now() if status == RUNNING else None, timeout_seconds=timeout_seconds,
         applied_from=applied_from,
         input_hash=input_hash(command, argv, [(f.path, f.sha256) for f in inputs]))
 

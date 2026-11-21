@@ -41,7 +41,10 @@ def main(argv=None) -> int:
     if args.spawn_child:
         code = ("import sys, time; time.sleep(2); "
                 "open(sys.argv[1], 'w', encoding='utf-8').write('alive')")
-        subprocess.Popen([sys.executable, "-c", code, args.spawn_child])  # noqa: S603
+        # Detached from our pipes, so this command can finish while the grandchild lives on.
+        subprocess.Popen([sys.executable, "-c", code, args.spawn_child],  # noqa: S603
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL)
     if args.sleep:
         time.sleep(args.sleep)
     if args.text:

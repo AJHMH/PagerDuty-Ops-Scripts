@@ -58,13 +58,11 @@ function statusLabel(run: Run): string {
 
 const runLink = (id: string) => `#/runs/${encodeURIComponent(id)}`;
 
-// Cancel (the requester, or any Approver) while a Run waits or executes; then, for a
-// Stopped apply, a fresh dry run with the same inputs shows what remains (ADR 0012).
-function RunControls({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
+// Runs one step (cancel, review, apply, fresh dry run), then shows the Run it returns:
+// this one updated in place, or a new one by navigating to it.
+function useStep(run: Run, onChange: (run: Run) => void) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const mine = run.requested_by === me.email;
-
   async function act(step: () => Promise<Run>) {
     setBusy(true);
     setError("");
@@ -78,6 +76,14 @@ function RunControls({ run, me, onChange }: { run: Run; me: Me; onChange: (run: 
       setBusy(false);
     }
   }
+  return { busy, error, act };
+}
+
+// Cancel (the requester, or any Approver) while a Run waits or executes; then, for a
+// Stopped apply, a fresh dry run with the same inputs shows what remains (ADR 0012).
+function RunControls({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
+  const { busy, error, act } = useStep(run, onChange);
+  const mine = run.requested_by === me.email;
 
   let control = null;
   if (run.status !== "finished" && (mine || me.role === "approver")) {
@@ -117,9 +123,8 @@ function RunControls({ run, me, onChange }: { run: Run; me: Me; onChange: (run: 
 // Review, then Apply (#73): only for the admin who ran a dry run that succeeded. The service
 // enforces every gate; this only decides which step to offer.
 function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
-  const [busy, setBusy] = useState(false);
+  const { busy, error, act } = useStep(run, onChange);
   const [understood, setUnderstood] = useState(false);
-  const [error, setError] = useState("");
   const mine = run.requested_by === me.email && me.role !== "viewer";
   if (run.kind !== "dry-run" || !mine || run.outcome !== "succeeded" || !run.review?.complete) {
     return null;
@@ -129,20 +134,6 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
       <p className="notice">Sent to be applied: <a href={runLink(run.applied_run_id)}>see
         the apply</a>.</p>
     );
-  }
-
-  async function act(step: () => Promise<Run>) {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await step();
-      if (result.id === run.id) onChange(result);
-      else window.location.hash = runLink(result.id);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
-    }
   }
 
   return (

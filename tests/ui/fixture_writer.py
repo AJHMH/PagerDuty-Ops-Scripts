@@ -52,6 +52,7 @@ def main(argv=None) -> int:
             return exit_code
         sys.stdout.write("APPLIED\n")
         return 0
+    time.sleep(float(os.environ.get("UI_FIXTURE_DRY_SLEEP", "0")))  # a slow dry run
     if first_input_line:
         sys.stdout.write(f"~ input: {first_input_line}\n")
     if os.environ.get("UI_FIXTURE_DRIFT"):  # live state changed since the reviewed dry run

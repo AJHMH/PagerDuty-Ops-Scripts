@@ -198,15 +198,35 @@ class RunStore:
         with Session(self.engine) as session, session.begin():
             session.execute(update(RunRecord).where(RunRecord.id == run_id).values(**values))
 
-    def finish(self, run_id: str, files: list[RunFile] = (), **values) -> None:
-        """Record how a running Run ended, with the output files it wrote."""
+    def finish(self, run_id: str, files: list[RunFile] | None = None, **values) -> bool:
+        """Record how a running Run ended, with the output files it wrote. False (and
+        nothing recorded) if it had already finished."""
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(
+                update(RunRecord).where(RunRecord.id == run_id, RunRecord.status == RUNNING)
+                .values(status=FINISHED, finished_at=now(), **values))
+            if result.rowcount != 1:
+                return False
+            for f in files or []:
+                f.run_id = run_id
+                session.add(f)
+            return True
+
+    def request_cancel(self, run_id: str, email: str) -> bool:
+        """Record who cancelled a running Run; False if it has already finished."""
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(
+                update(RunRecord).where(RunRecord.id == run_id, RunRecord.status == RUNNING,
+                                        RunRecord.cancelled_by.is_(None))
+                .values(cancelled_by=email))
+            return result.rowcount == 1
+
+    def requeue(self, run_id: str) -> None:
+        """Put a Writing run that hadn't started writing back in the queue, in its place."""
         with Session(self.engine) as session, session.begin():
             session.execute(update(RunRecord)
                             .where(RunRecord.id == run_id, RunRecord.status == RUNNING)
-                            .values(status=FINISHED, finished_at=now(), **values))
-            for f in files:
-                f.run_id = run_id
-                session.add(f)
+                            .values(status=QUEUED, started_at=None, fresh_dry_run_id=None))
 
     def cancel_queued(self, run_id: str, email: str) -> bool:
         """Atomically stop a Run that hasn't started; False if it already has."""
@@ -236,12 +256,15 @@ class RunStore:
 
     def stop_interrupted(self) -> None:
         """At startup: whatever was executing when the service stopped was cut off."""
+        note = "Stopped: the service restarted while this Run was executing."
         with Session(self.engine) as session, session.begin():
-            session.execute(
-                update(RunRecord).where(RunRecord.status == RUNNING)
-                .values(status=FINISHED, outcome="stopped", finished_at=now(),
-                        note="Stopped: the service restarted while this Run was executing. "
-                             "An apply may have been partly applied."))
+            for kind_is_apply, text in ((True, f"{note} It may have been partly applied."),
+                                        (False, note)):
+                kind = RunRecord.kind == "apply"
+                session.execute(
+                    update(RunRecord)
+                    .where(RunRecord.status == RUNNING, kind if kind_is_apply else ~kind)
+                    .values(status=FINISHED, outcome="stopped", finished_at=now(), note=text))
 
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:
