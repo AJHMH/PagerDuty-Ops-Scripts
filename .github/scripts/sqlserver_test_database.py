@@ -1,10 +1,11 @@
-"""CI only (#70): wait for the throwaway SQL Server, create an empty test database, and print
-its SQLAlchemy URL. The sa password is generated in the job and never committed."""
+"""CI only (#70): wait for the throwaway SQL Server and create an empty test database.
+
+The sa password is generated in the job and never committed. This script never prints it:
+the workflow builds the test database URL itself."""
 
 import os
 import sys
 import time
-from urllib.parse import quote_plus
 
 import pyodbc
 
@@ -33,8 +34,7 @@ def main() -> int:
                 return 1
             time.sleep(2)
     connection.execute(f"IF DB_ID('{DATABASE}') IS NULL CREATE DATABASE {DATABASE}")
-    print(f"mssql+pyodbc://sa:{quote_plus(password)}@127.0.0.1:1433/{DATABASE}"
-          f"?driver={quote_plus(DRIVER)}&TrustServerCertificate=yes")
+    print(f"Created {DATABASE}.", file=sys.stderr)
     return 0
 
 
