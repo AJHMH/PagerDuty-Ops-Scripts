@@ -13,6 +13,7 @@ import subprocess
 import sys
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -29,6 +30,8 @@ LAUNCHER = ("import sys\n"
             "from pagerduty_ops.cli import run\n"
             "sys.argv[0] = {name!r}\n"
             "run(getattr(import_module({module!r}), {attr!r}))\n")
+
+LAUNCHER_MARK = b"from pagerduty_ops.cli import run"  # how a Run's process is recognised
 
 REDACTED = "[redacted]"
 
@@ -77,9 +80,11 @@ DRAIN_SECONDS = 10  # after a kill, how long to wait for the last of the output
 def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
                 extra_env: dict[str, str], secret_env: dict[str, str],
                 timeout: float | None = None,
-                cancel: threading.Event | None = None) -> Result:
+                cancel: threading.Event | None = None,
+                on_start: Callable[[int], None] | None = None) -> Result:
     """Run to completion, or kill the whole process tree at `timeout` seconds or when
-    `cancel` is set; either way the outcome is "stopped" (ADR 0012)."""
+    `cancel` is set; either way the outcome is "stopped" (ADR 0012). `on_start` gets the
+    process ID once the process exists."""
     if cancel is not None and cancel.is_set():  # never start a process that is cancelled
         return Result(exit_code=None, outcome="stopped", stdout="",
                       stderr="[stopped: cancelled]\n", stop_reason="cancelled")
@@ -94,6 +99,8 @@ def run_command(entry: CommandEntry, argv: list[str], *, cwd: Path,
     deadline = None if timeout is None else time.monotonic() + timeout
     stopped = None
     try:
+        if on_start is not None:
+            on_start(process.pid)
         while True:
             try:
                 stdout, stderr = process.communicate(timeout=POLL_SECONDS)
@@ -210,6 +217,10 @@ if os.name == "nt":
             if self.job:
                 _kernel32.CloseHandle(self.job)  # kill-on-close: nothing outlives it
                 self.job = None
+
+    def kill_leftover(pid: int) -> None:
+        """Nothing to do: when the service process dies, Windows closes its handle to each
+        Run's Job Object, which kills the job (kill-on-close)."""
 else:
     class ProcessTree:
         """The Run's process leads its own process group: the command and every process
@@ -226,4 +237,20 @@ else:
                 pass
 
         def close(self) -> None:
+            pass
+
+    def kill_leftover(pid: int) -> None:
+        """After a crash, kill the process group a Run left behind, if `pid` is still one
+        of this service's Runs. A process ID can be reused, so the process must be running
+        the Run launcher (read from /proc; where there is no /proc, nothing is killed)."""
+        try:
+            with open(f"/proc/{pid}/cmdline", "rb") as f:
+                cmdline = f.read()
+        except OSError:
+            return
+        if LAUNCHER_MARK not in cmdline or os.getpgid(pid) != pid:
+            return
+        try:
+            os.killpg(pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
             pass

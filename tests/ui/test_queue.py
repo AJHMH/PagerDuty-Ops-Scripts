@@ -1,6 +1,9 @@
 """#74 one Writing run at a time, timeouts and cancellation (ADR 0012). Seam B: the HTTP API
 with real subprocess Runs of test-only fixture commands that sleep."""
 
+import os
+import subprocess
+import sys
 import time
 
 import pytest
@@ -304,3 +307,97 @@ def test_a_shutdown_during_the_fresh_check_leaves_the_apply_queued(settings, cat
     with service() as client:
         resumed = wait(client, a["id"])
         assert (resumed["outcome"], resumed["stdout"]) == ("succeeded", "APPLIED\n")
+
+
+# ---------- a crash must not leave a writer running (Codex review on #92) ----------
+
+def leftover_run(settings, catalog, argv):
+    """A Run's process still alive behind a "running" row, as after the host killed the
+    service outright, so no shutdown handler ran."""
+    from conftest import HERE
+
+    from pagerduty_ops_ui.runner import LAUNCHER, ProcessTree, child_env
+    from pagerduty_ops_ui.store import RunRecord, RunStore, now
+
+    entry = catalog["ui-fixture"]
+    code = LAUNCHER.format(name=entry.name, module=entry.module, attr=entry.attr)
+    tree = ProcessTree([sys.executable, "-c", code, *argv],
+                       env=child_env({"PYTHONPATH": str(HERE)}, {}),
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL)
+    RunStore(settings.database_url).save(RunRecord(
+        id="leftover", command="ui-fixture", argv=argv, requested_by="a@x",
+        requester_name="A", requester_role="viewer", queued_at=now(), started_at=now(),
+        timeout_seconds=60, status="running", pid=tree.process.pid))
+    return tree
+
+
+@pytest.mark.skipif(os.name == "nt", reason="On Windows the Run's Job Object is killed by "
+                                             "the OS when the service process dies.")
+def test_a_restart_kills_a_run_left_behind_by_a_crash(settings, catalog, monkeypatch):
+    from conftest import HERE, HeaderIdentity
+    from fastapi.testclient import TestClient
+
+    from pagerduty_ops_ui.app import create_app
+
+    monkeypatch.syspath_prepend(str(HERE))
+    tree = leftover_run(settings, catalog, ["--sleep", "60"])
+    time.sleep(1)  # let the interpreter start, as a real Run would have
+    try:
+        with TestClient(create_app(settings, identity=HeaderIdentity(), catalog=catalog)):
+            wait_until(lambda: tree.process.poll() is not None, timeout=10)
+    finally:
+        tree.kill()
+
+
+def test_a_process_that_is_not_a_run_is_never_killed_at_restart(settings, catalog,
+                                                                monkeypatch):
+    # The row's process ID may have been reused by an unrelated process since the crash.
+    from conftest import HERE, HeaderIdentity
+    from fastapi.testclient import TestClient
+
+    from pagerduty_ops_ui.app import create_app
+    from pagerduty_ops_ui.store import RunRecord, RunStore, now
+
+    monkeypatch.syspath_prepend(str(HERE))
+    other = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"],
+                             start_new_session=os.name != "nt")
+    RunStore(settings.database_url).save(RunRecord(
+        id="reused", command="ui-fixture", argv=[], requested_by="a@x", requester_name="A",
+        requester_role="viewer", queued_at=now(), started_at=now(), timeout_seconds=60,
+        status="running", pid=other.pid))
+    try:
+        with TestClient(create_app(settings, identity=HeaderIdentity(), catalog=catalog)):
+            time.sleep(1)
+            assert other.poll() is None
+    finally:
+        other.kill()
+        other.wait()
+
+
+# ---------- a database blip doesn't stop the writer (Codex review on #92) ----------
+
+def test_the_writer_survives_a_database_error(settings, catalog, monkeypatch):
+    from conftest import HERE, HeaderIdentity
+    from fastapi.testclient import TestClient
+    from sqlalchemy.exc import OperationalError
+
+    from pagerduty_ops_ui.app import create_app
+    from pagerduty_ops_ui.store import RunStore
+
+    monkeypatch.syspath_prepend(str(HERE))
+    real = RunStore.next_queued
+    failures = []
+
+    def flaky(self):
+        if len(failures) < 2:
+            failures.append(1)
+            raise OperationalError("SELECT", {}, Exception("database unavailable"))
+        return real(self)
+
+    monkeypatch.setattr(RunStore, "next_queued", flaky)
+    app = create_app(settings, identity=HeaderIdentity(), catalog=catalog)
+    with TestClient(app, headers={"X-PD-Ops-Request": "1"}) as client:
+        wait_until(lambda: len(failures) == 2)
+        dry = reviewed_dry_run(client)
+        assert wait(client, apply(client, dry["id"])["id"])["outcome"] == "succeeded"

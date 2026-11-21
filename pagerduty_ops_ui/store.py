@@ -51,6 +51,9 @@ class RunRecord(Base):
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     timeout_seconds: Mapped[int] = mapped_column(Integer)
+    # The Run's process (group) ID while it executes, so a restart after a crash can kill
+    # whatever the dead service left running.
+    pid: Mapped[int | None] = mapped_column(Integer)
     exit_code: Mapped[int | None] = mapped_column(Integer)
     outcome: Mapped[str | None] = mapped_column(Unicode(20))
     # The service's own word on how a Run ended, when the command's log doesn't say (e.g.
@@ -254,10 +257,13 @@ class RunStore:
             return {"executing": to_dict(executing, []) if executing else None,
                     "pending": [to_dict(r, []) for r in pending]}
 
-    def stop_interrupted(self) -> None:
-        """At startup: whatever was executing when the service stopped was cut off."""
+    def stop_interrupted(self) -> list[int]:
+        """At startup: whatever was executing when the service stopped was cut off. Returns
+        the process IDs those Runs had, for the caller to make sure they are gone."""
         note = "Stopped: the service restarted while this Run was executing."
         with Session(self.engine) as session, session.begin():
+            pids = list(session.scalars(select(RunRecord.pid).where(
+                RunRecord.status == RUNNING, RunRecord.pid.is_not(None))))
             for kind_is_apply, text in ((True, f"{note} It may have been partly applied."),
                                         (False, note)):
                 kind = RunRecord.kind == "apply"
@@ -265,6 +271,7 @@ class RunStore:
                     update(RunRecord)
                     .where(RunRecord.status == RUNNING, kind if kind_is_apply else ~kind)
                     .values(status=FINISHED, outcome="stopped", finished_at=now(), note=text))
+        return pids
 
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:

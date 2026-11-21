@@ -166,20 +166,29 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState("");
 
+  // Each effect applies only its own responses: after moving to another Run, a late
+  // response for the previous one is ignored rather than shown under the new Run's URL.
   useEffect(() => {
+    let current = true;
     setRun(null);
     setError("");
-    getRun(id).then(setRun).catch((e: Error) => setError(e.message));
+    getRun(id)
+      .then((r) => { if (current) setRun(r); })
+      .catch((e: Error) => { if (current) setError(e.message); });
+    return () => { current = false; };
   }, [id]);
 
   // Runs execute in the background: re-read this one until it has finished.
   const unfinished = run !== null && run.id === id && run.status !== "finished";
   useEffect(() => {
     if (!unfinished) return;
+    let current = true;
     const timer = window.setTimeout(() => {
-      getRun(id).then(setRun).catch((e: Error) => setError(e.message));
+      getRun(id)
+        .then((r) => { if (current) setRun(r); })
+        .catch((e: Error) => { if (current) setError(e.message); });
     }, POLL_MS);
-    return () => window.clearTimeout(timer);
+    return () => { current = false; window.clearTimeout(timer); };
   }, [id, unfinished, run]);
 
   if (error) return <p className="error" role="alert">{error}</p>;

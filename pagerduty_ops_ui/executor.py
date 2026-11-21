@@ -10,6 +10,7 @@ Every Run has a timeout and can be cancelled; either way it is recorded as Stopp
 
 from __future__ import annotations
 
+import logging
 import shutil
 import threading
 import uuid
@@ -18,10 +19,13 @@ from pathlib import Path
 
 from . import files as run_files
 from .review import MODE_FLAGS, input_hash, output_hash
-from .runner import Result, run_command
+from .runner import Result, kill_leftover, run_command
 from .store import RUNNING, RunFile, RunRecord, RunStore, now
 
 IDLE_POLL_SECONDS = 1.0  # the writer also re-reads the queue this often
+MAX_BACKOFF_SECONDS = 30.0  # longest wait between retries after a database error
+
+log = logging.getLogger(__name__)
 
 
 class InputChanged(Exception):
@@ -43,8 +47,10 @@ class Executor:
     # ---------- lifecycle ----------
 
     def start(self) -> None:
-        """Record what a restart cut off as Stopped, then resume the queue."""
-        self.store.stop_interrupted()
+        """Record what a restart cut off as Stopped, make sure a crashed service left none
+        of its processes running, then resume the queue."""
+        for pid in self.store.stop_interrupted():
+            kill_leftover(pid)
         self._writer = threading.Thread(target=self._write_loop, name="pd-ops-writer",
                                         daemon=True)
         self._writer.start()
@@ -136,7 +142,8 @@ class Executor:
         result = run_command(entry, list(run.argv), cwd=run_dir,
                              extra_env=self.settings.extra_env,
                              secret_env=self.settings.secret_env,
-                             timeout=run.timeout_seconds, cancel=cancel)
+                             timeout=run.timeout_seconds, cancel=cancel,
+                             on_start=lambda pid: self.store.update(run_id, pid=pid))
         outputs = run_files.collect_outputs(run_dir, inputs)
         values = dict(exit_code=result.exit_code, outcome=result.outcome,
                       stdout=result.stdout, stderr=result.stderr,
@@ -158,27 +165,52 @@ class Executor:
     # ---------- the one writing slot ----------
 
     def _write_loop(self) -> None:
+        """Take queued applies one at a time. A database error is logged and retried with
+        backoff, so the writer outlives a database outage."""
+        failures = 0
         while not self._stopping.is_set():
-            run_id = self.store.next_queued()
-            # Registered before the Run starts, so a stop() from here on reaches it.
-            cancel = self._cancel_event(run_id) if run_id else None
-            if run_id is None or self._stopping.is_set() or not self.store.start(run_id):
-                if run_id:
-                    self._forget(run_id)
+            try:
+                self._write_next()
+                failures = 0
+            except Exception:  # noqa: BLE001 - the one writer must keep going
+                failures += 1
+                delay = min(MAX_BACKOFF_SECONDS, 0.5 * 2 ** (failures - 1))
+                log.exception("Writer: couldn't read the queue; retrying in %gs", delay)
                 with self._wake:
                     if not self._stopping.is_set():
-                        self._wake.wait(IDLE_POLL_SECONDS)
-                continue
-            try:
-                self._apply(run_id, cancel)
-            except Exception as e:  # noqa: BLE001 - record it, free the dry run, carry on
-                self.store.finish(run_id, outcome="failed",
-                                  note=f"The service couldn't run this apply: {e}. Nothing "
-                                       "more will run for it; the dry run can be applied "
-                                       "again.")
-                self._release(run_id)
-            finally:
-                self._forget(run_id)
+                        self._wake.wait(delay)
+
+    def _write_next(self) -> None:
+        """Execute the next queued apply, or wait a moment if there is none."""
+        run_id = self.store.next_queued()
+        if run_id is None:
+            self._idle()
+            return
+        try:
+            # Registered before the Run starts, so a stop() from here on reaches it.
+            cancel = self._cancel_event(run_id)
+            started = not self._stopping.is_set() and self.store.start(run_id)
+        except BaseException:
+            self._forget(run_id)
+            raise
+        if not started:
+            self._forget(run_id)
+            self._idle()
+            return
+        try:
+            self._apply(run_id, cancel)
+        except Exception as e:  # noqa: BLE001 - record it, free the dry run, carry on
+            self.store.finish(run_id, outcome="failed",
+                              note=f"The service couldn't run this apply: {e}. Nothing "
+                                   "more will run for it; the dry run can be applied again.")
+            self._release(run_id)
+        finally:
+            self._forget(run_id)
+
+    def _idle(self) -> None:
+        with self._wake:
+            if not self._stopping.is_set():
+                self._wake.wait(IDLE_POLL_SECONDS)
 
     def _release(self, apply_id: str) -> None:
         run = self.store.record(apply_id)
