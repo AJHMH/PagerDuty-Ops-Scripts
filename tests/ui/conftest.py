@@ -3,7 +3,9 @@ provider, SQLite through the production database layer, and real subprocess Runs
 
 import json
 import os
+import shutil
 import time
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -54,10 +56,103 @@ def catalog():
     return entries
 
 
+# The Run store's tests run on SQLite by default. CI also runs them on SQL Server (ADR 0007,
+# #70) by setting this to a SQLAlchemy URL for an empty database the tests may own.
+TEST_DATABASE_URL = os.environ.get("PD_UI_TEST_DATABASE_URL", "").strip() or None
+# CI sets this to the database it means to test ("mssql"), so the job fails rather than
+# quietly passing on SQLite if the URL ever goes missing.
+EXPECTED_BACKEND = os.environ.get("PD_UI_TEST_DATABASE_BACKEND", "").strip() or None
+
+
+def pytest_sessionstart(session):
+    if EXPECTED_BACKEND is None:
+        return
+    from sqlalchemy.engine import make_url
+
+    actual = make_url(TEST_DATABASE_URL).get_backend_name() if TEST_DATABASE_URL else "sqlite"
+    if actual != EXPECTED_BACKEND:
+        pytest.exit(f"PD_UI_TEST_DATABASE_BACKEND is {EXPECTED_BACKEND!r}, but the tests would "
+                    f"run on {actual!r}: is PD_UI_TEST_DATABASE_URL set?", returncode=1)
+
+
+class SharedDatabase:
+    """One database the tests own (SQL Server in CI): migrated once, rows cleared per test."""
+
+    def __init__(self, url):
+        self.url = url
+
+    def migrate(self):
+        from pagerduty_ops_ui.migrate import upgrade
+
+        upgrade(self.url)
+
+    def fresh(self, tmp_path):
+        from sqlalchemy import create_engine, text
+
+        engine = create_engine(self.url)
+        with engine.begin() as db:
+            db.execute(text("DELETE FROM run_files"))
+            db.execute(text("DELETE FROM runs"))
+        engine.dispose()
+        return self.url
+
+    @contextmanager
+    def empty(self, tmp_path):
+        from pagerduty_ops_ui.migrate import downgrade, upgrade
+
+        downgrade(self.url, "base")
+        try:
+            yield self.url
+        finally:
+            upgrade(self.url)
+
+
+class SqliteFiles:
+    """A SQLite file per test, copied from one migrated template."""
+
+    def __init__(self, directory):
+        self.template = directory / "template.db"
+
+    def migrate(self):
+        from pagerduty_ops_ui.migrate import upgrade
+
+        upgrade(f"sqlite:///{self.template}")
+
+    def fresh(self, tmp_path):
+        path = tmp_path / "runs.db"
+        shutil.copyfile(self.template, path)
+        return f"sqlite:///{path}"
+
+    @contextmanager
+    def empty(self, tmp_path):
+        yield f"sqlite:///{tmp_path / 'empty.db'}"
+
+
+@pytest.fixture(scope="session")
+def test_database(tmp_path_factory):
+    database = (SharedDatabase(TEST_DATABASE_URL) if TEST_DATABASE_URL
+                else SqliteFiles(tmp_path_factory.mktemp("schema")))
+    database.migrate()
+    return database
+
+
 @pytest.fixture
-def settings(tmp_path):
+def database_url(tmp_path, test_database):
+    """A migrated, empty Run store for one test."""
+    return test_database.fresh(tmp_path)
+
+
+@pytest.fixture
+def empty_database(tmp_path, test_database):
+    """A database with no schema at all, as before pd-ui-migrate first runs."""
+    with test_database.empty(tmp_path) as url:
+        yield url
+
+
+@pytest.fixture
+def settings(tmp_path, database_url):
     return Settings(
-        database_url=f"sqlite:///{tmp_path / 'runs.db'}",
+        database_url=database_url,
         run_root=tmp_path / "runs",
         secret_env={"PD_API_TOKEN": SECRET},
         extra_env={"PYTHONPATH": os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")])},
