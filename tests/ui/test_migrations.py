@@ -55,3 +55,60 @@ def test_pd_ui_migrate_needs_the_database_url(monkeypatch):
 
     monkeypatch.delenv("PD_UI_DATABASE_URL", raising=False)
     assert main([]) == 2
+
+
+def test_pd_ui_migrate_help_changes_nothing(tmp_path, monkeypatch, capsys):
+    from pagerduty_ops_ui.migrate import main
+
+    database = tmp_path / "untouched.db"
+    monkeypatch.setenv("PD_UI_DATABASE_URL", f"sqlite:///{database}")
+    with pytest.raises(SystemExit) as done:
+        main(["--help"])
+    assert done.value.code == 0
+    assert "PD_UI_DATABASE_URL" in capsys.readouterr().out
+    assert not database.exists()  # never connected, let alone migrated
+    with pytest.raises(SystemExit) as done:
+        main(["--no-such-option"])
+    assert done.value.code == 2
+    assert not database.exists()
+
+
+def test_pd_ui_migrate_reports_a_bad_url_as_a_configuration_error(monkeypatch, capsys):
+    from pagerduty_ops_ui.migrate import main
+
+    monkeypatch.setenv("PD_UI_DATABASE_URL", "not a url")
+    assert main([]) == 2
+    assert "PD_UI_DATABASE_URL" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("message, code", [
+    ("[28000] Login failed for user 'deploy'. (18456)", 3),
+    ("[08001] TCP Provider: Error code 0x2749 (10057)", 2),
+])
+def test_pd_ui_migrate_tells_a_refused_login_from_an_unreachable_server(
+        monkeypatch, capsys, message, code):
+    from sqlalchemy.exc import DBAPIError
+
+    import pagerduty_ops_ui.migrate as migrate
+
+    def refuse(engine):
+        raise DBAPIError("connect", {}, Exception(message))
+
+    monkeypatch.setenv("PD_UI_DATABASE_URL", "sqlite://")
+    monkeypatch.setattr(migrate, "current_revision", refuse)
+    assert migrate.main([]) == code
+    err = capsys.readouterr().err
+    assert message in err and "Traceback" not in err
+
+
+def test_pd_ui_migrate_reports_a_failed_migration_without_a_traceback(empty_database,
+                                                                      monkeypatch, capsys):
+    import pagerduty_ops_ui.migrate as migrate
+
+    def broken(url, revision="head"):
+        raise RuntimeError("duplicate column")
+
+    monkeypatch.setenv("PD_UI_DATABASE_URL", empty_database)
+    monkeypatch.setattr(migrate, "upgrade", broken)
+    assert migrate.main([]) == 1
+    assert "duplicate column" in capsys.readouterr().err

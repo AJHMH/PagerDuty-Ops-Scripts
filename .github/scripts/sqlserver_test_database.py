@@ -12,6 +12,11 @@ DRIVER = "ODBC Driver 18 for SQL Server"
 DATABASE = "pdops_test"
 
 
+def odbc_braced(value: str) -> str:
+    """Escape a value for {braces} in an ODBC connection string."""
+    return value.replace("}", "}}")
+
+
 def main() -> int:
     password = os.environ["MSSQL_SA_PASSWORD"]
     server = "127.0.0.1,1433"
@@ -19,7 +24,7 @@ def main() -> int:
     while True:
         try:
             connection = pyodbc.connect(
-                f"DRIVER={{{DRIVER}}};SERVER={server};UID=sa;PWD={password};"
+                f"DRIVER={{{DRIVER}}};SERVER={server};UID=sa;PWD={{{odbc_braced(password)}}};"
                 "TrustServerCertificate=yes", autocommit=True, timeout=5)
             break
         except pyodbc.Error:

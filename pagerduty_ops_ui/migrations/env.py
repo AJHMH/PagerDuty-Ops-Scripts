@@ -9,24 +9,17 @@ config = context.config
 
 
 def run_migrations_online() -> None:
-    connection = config.attributes.get("connection")
-    if connection is not None:
-        _run(connection)
-        return
     engine = create_engine(config.get_main_option("sqlalchemy.url"))
     with engine.connect() as connection:
-        _run(connection)
-
-
-def _run(connection) -> None:
-    context.configure(
-        connection=connection,
-        target_metadata=Base.metadata,
-        render_as_batch=connection.dialect.name == "sqlite",  # SQLite can't ALTER much
-        compare_type=True,
-    )
-    with context.begin_transaction():
-        context.run_migrations()
+        context.configure(
+            connection=connection,
+            target_metadata=Base.metadata,
+            render_as_batch=connection.dialect.name == "sqlite",  # SQLite can't ALTER much
+            compare_type=True,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+    engine.dispose()
 
 
 if context.is_offline_mode():

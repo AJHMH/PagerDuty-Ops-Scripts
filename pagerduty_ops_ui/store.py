@@ -18,6 +18,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
 
+from .migrate import check_schema
 from .review import review
 
 QUEUED, RUNNING, FINISHED = "queued", "running", "finished"
@@ -134,8 +135,6 @@ def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
 
 class RunStore:
     def __init__(self, database_url: str):
-        from .migrate import check_schema  # migrate imports this module's models
-
         self.engine = create_engine(database_url)
         # The schema comes from migrations, applied by pd-ui-migrate (#70); the service
         # only checks it, so its own account needs no rights to change the schema.

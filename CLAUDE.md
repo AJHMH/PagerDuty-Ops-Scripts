@@ -35,6 +35,8 @@ gitleaks history scan. Run the unit suite and ruff before every commit.
   run, or is an Irreversible operation (ADR 0010).
 - `pagerduty_ops/console_scripts.py` — `SCRIPTS`: console script → (module, entry function).
 - `pagerduty_ops_ui/` — the UI service (FastAPI); `ui/` — its React/TypeScript front end.
+  Its schema comes from Alembic migrations in `pagerduty_ops_ui/migrations/`, applied by
+  `pd-ui-migrate` (a model change needs a new migration; `test_migrations.py` checks).
   The service never imports command logic: Runs are subprocesses, risk comes from `risk.py`.
 - `pd_common.py` — deprecated re-export surface; do not add to it.
 
