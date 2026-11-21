@@ -61,3 +61,17 @@ button.danger { background: var(--bad); }
 
 pre.log { max-height: 32rem; overflow-y: auto; }
 .live { color: var(--accent); font-size: 0.8em; font-weight: 600; }
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(12rem, 1fr));
+           gap: 0 1rem; align-items: end; }
+.filters label { margin-top: 0.5rem; }
+.filters input[type=date] { display: block; width: 100%; box-sizing: border-box;
+                            margin-top: 0.25rem; padding: 0.4rem; font: inherit; }
+.filters .actions { display: flex; gap: 1rem; align-items: baseline; }
+table.history { width: 100%; border-collapse: collapse; }
+table.history td, table.history th { text-align: left; padding: 0.35rem 0.5rem;
+                                     border-bottom: 1px solid var(--line); }
+.pager { display: flex; gap: 1.5rem; margin-top: 1rem; }
+header nav a { margin: 0 0.25rem; }
+button.link { background: none; border: none; color: var(--accent); padding: 0;
+              text-decoration: underline; cursor: pointer; margin-top: 1rem; }
+.hint { color: var(--muted, #555); font-size: 0.9em; margin-top: 0.5rem; }

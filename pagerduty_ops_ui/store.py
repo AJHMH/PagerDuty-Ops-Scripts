@@ -13,15 +13,19 @@ from sqlalchemy import (
     Unicode,
     UnicodeText,
     create_engine,
+    func,
+    or_,
     select,
     update,
 )
-from sqlalchemy.orm import DeclarativeBase, Mapped, Session, mapped_column
+from sqlalchemy.orm import DeclarativeBase, Mapped, Session, load_only, mapped_column
 
 from .migrate import check_schema
 from .review import review
 
 QUEUED, RUNNING, FINISHED = "queued", "running", "finished"
+RUN_KINDS = ("report", "dry-run", "apply")
+UNFINISHED = "unfinished"  # history filter: Runs still queued or running (no outcome yet)
 
 
 def now() -> datetime:
@@ -48,7 +52,7 @@ class RunRecord(Base):
     # slot), "running", then "finished" with an outcome. The queue is these rows, so it
     # survives a restart.
     status: Mapped[str] = mapped_column(Unicode(10), default="running", index=True)
-    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     timeout_seconds: Mapped[int] = mapped_column(Integer)
@@ -114,19 +118,37 @@ def file_dict(f: RunFile) -> dict:
     return {"id": f.id, "role": f.role, "path": f.path, "size": f.size, "sha256": f.sha256}
 
 
-def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
+# The columns summary_dict reads: lists of Runs load only these, never a Run's output or log.
+SUMMARY_COLUMNS = (
+    RunRecord.id, RunRecord.command, RunRecord.argv, RunRecord.kind, RunRecord.status,
+    RunRecord.outcome, RunRecord.requested_by, RunRecord.requester_name,
+    RunRecord.requester_role, RunRecord.queued_at, RunRecord.started_at,
+    RunRecord.finished_at, RunRecord.applied_from,
+)
+
+
+def summary_dict(run: RunRecord) -> dict:
+    """A Run as a row of the history (#69): what it was and how it ended, without its
+    output, log or files."""
     return {
-        "id": run.id, "command": run.command, "argv": list(run.argv),
+        "id": run.id, "command": run.command, "argv": list(run.argv), "kind": run.kind,
+        "status": run.status, "outcome": run.outcome,
         "requested_by": run.requested_by, "requester_name": run.requester_name,
-        "requester_role": run.requester_role,
-        "status": run.status, "queued_at": _iso(run.queued_at),
+        "requester_role": run.requester_role, "queued_at": _iso(run.queued_at),
         "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
+        "applied_from": run.applied_from,
+    }
+
+
+def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
+    """The whole Run, as its page shows it."""
+    return {
+        **summary_dict(run),
         "cancelled_by": run.cancelled_by, "fresh_dry_run_id": run.fresh_dry_run_id,
-        "exit_code": run.exit_code, "outcome": run.outcome,
-        "stdout": run.stdout, "stderr": run.stderr, "message": _message(run),
-        "kind": run.kind, "input_hash": run.input_hash, "output_hash": run.output_hash,
-        "reviewed_by": run.reviewed_by, "reviewed_at": _iso(run.reviewed_at),
-        "applied_run_id": run.applied_run_id, "applied_from": run.applied_from,
+        "exit_code": run.exit_code, "stdout": run.stdout, "stderr": run.stderr,
+        "message": _message(run), "input_hash": run.input_hash,
+        "output_hash": run.output_hash, "reviewed_by": run.reviewed_by,
+        "reviewed_at": _iso(run.reviewed_at), "applied_run_id": run.applied_run_id,
         "review": (review(run.stdout, run.stderr, run.outcome)
                    if run.kind == "dry-run" and run.status == FINISHED else None),
         "files": [file_dict(f) for f in files],
@@ -259,12 +281,13 @@ class RunStore:
     def queue(self) -> dict:
         """The executing Writing run, if any, and the ones waiting, oldest first."""
         with Session(self.engine) as session:
-            executing = session.scalar(select(RunRecord).where(
+            summaries = select(RunRecord).options(load_only(*SUMMARY_COLUMNS))
+            executing = session.scalar(summaries.where(
                 RunRecord.kind == "apply", RunRecord.status == RUNNING))
-            pending = session.scalars(select(RunRecord).where(RunRecord.status == QUEUED)
+            pending = session.scalars(summaries.where(RunRecord.status == QUEUED)
                                       .order_by(RunRecord.queued_at, RunRecord.id)).all()
-            return {"executing": to_dict(executing, []) if executing else None,
-                    "pending": [to_dict(r, []) for r in pending]}
+            return {"executing": summary_dict(executing) if executing else None,
+                    "pending": [summary_dict(r) for r in pending]}
 
     def stop_interrupted(self) -> list[int]:
         """At startup: whatever was executing when the service stopped was cut off. Returns
@@ -281,6 +304,41 @@ class RunStore:
                     .where(RunRecord.status == RUNNING, kind if kind_is_apply else ~kind)
                     .values(status=FINISHED, outcome="stopped", finished_at=now(), note=text))
         return pids
+
+    def search(self, *, command: str | None = None, requester: str | None = None,
+               since: datetime | None = None, before: datetime | None = None,
+               outcome: str | None = None, kind: str | None = None,
+               page: int = 1, per_page: int = 50) -> dict:
+        """The Run history (#69): Runs matching every filter given, newest first, one page
+        at a time. `requester` matches part of the requester's email or name, ignoring
+        case; `since` is inclusive and `before` exclusive, on when the Run was requested."""
+        conditions = []
+        if command:
+            conditions.append(RunRecord.command == command)
+        if requester:
+            needle = requester.lower()
+            conditions.append(or_(
+                func.lower(RunRecord.requested_by).contains(needle, autoescape=True),
+                func.lower(RunRecord.requester_name).contains(needle, autoescape=True)))
+        if since is not None:
+            conditions.append(RunRecord.queued_at >= since)
+        if before is not None:
+            conditions.append(RunRecord.queued_at < before)
+        if outcome == UNFINISHED:
+            conditions.append(RunRecord.status != FINISHED)
+        elif outcome:
+            conditions.append(RunRecord.outcome == outcome)
+        if kind:
+            conditions.append(RunRecord.kind == kind)
+        with Session(self.engine) as session:
+            total = session.scalar(select(func.count()).select_from(RunRecord)
+                                   .where(*conditions))
+            runs = session.scalars(
+                select(RunRecord).options(load_only(*SUMMARY_COLUMNS)).where(*conditions)
+                .order_by(RunRecord.queued_at.desc(), RunRecord.id.desc())
+                .offset((page - 1) * per_page).limit(per_page)).all()
+            return {"runs": [summary_dict(r) for r in runs], "total": total, "page": page,
+                    "per_page": per_page}
 
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:

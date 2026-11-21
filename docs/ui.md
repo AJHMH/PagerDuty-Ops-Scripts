@@ -103,6 +103,19 @@ A `[dry-run]` line whose verb isn't recognised counts as an "other change", unle
 
 Cap overrides are #75.
 
+## Run history (#69)
+
+`GET /api/runs` is the searchable history, for every role. It returns `{runs, total, page, per_page}`: Runs newest first (by when they were requested), as summaries without their output, log or files; each links to its Run page in the UI. Filters combine:
+
+- `command`: the exact command name;
+- `requester`: part of the requester's email or name, ignoring case (`%` and `_` are literal);
+- `since` and `before`: ISO 8601 dates and times with a timezone, on when the Run was requested; `since` is included, `before` is not;
+- `outcome`: `succeeded`, `failed`, `usage-error`, `auth-error`, `stopped` or `changed`;
+- `kind`: `report`, `dry-run` or `apply`;
+- `page` (from 1) and `per_page` (1–200, default 50).
+
+`outcome=unfinished` finds Runs still queued or running. An unknown outcome or kind, a date without a timezone, `page` below 1 or `per_page` outside 1–200 is refused (422); a page past the last one returns no rows, and the History page then offers a link back to the newest Runs. The History page keeps its filters in the URL (`#/history?…`), so a search can be shared; its From and To dates are whole days in the browser's time zone, which the page names, and To includes its day. A malformed date in a shared link is ignored, with a note. Migration `0002` indexes Runs by when they were requested.
+
 ## One writing Run at a time (#74, ADR 0012)
 
 - **The queue.** Only one apply executes at a time across the account; the others wait, oldest first. Reports and dry runs never wait. The queue is the `queued` rows of the Run store, so it survives a restart. `GET /api/queue` (any role) returns `{executing, pending}`, and the home page shows it.
@@ -196,7 +209,6 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 ## Not yet
 
 These are later tickets:
-- Run history search (#69);
 - the Windows host packaging (#71);
 - the rest of Phase 2: cap overrides (#75), and the Ledger and 90-day purge (#76);
 - Phase 3: Approvals (#77) and what follows them.

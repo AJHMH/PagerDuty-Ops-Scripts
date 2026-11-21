@@ -19,8 +19,13 @@ from pathlib import Path
 
 from . import files as run_files
 from .review import MODE_FLAGS, input_hash, output_hash
-from .runner import Result, kill_leftover, run_command
+from .runner import OUTCOMES, Result, kill_leftover, run_command
 from .store import RUNNING, RunFile, RunRecord, RunStore, now
+
+# An apply whose fresh dry run no longer matched the review: nothing was applied (#74).
+CHANGED = "changed"
+# Every outcome a finished Run can have: the command's own (from its exit code), or Changed.
+FINAL_OUTCOMES = frozenset(OUTCOMES.values()) | {CHANGED}
 
 IDLE_POLL_SECONDS = 1.0  # the writer also re-reads the queue this often
 MAX_BACKOFF_SECONDS = 30.0  # longest wait between retries after a database error
@@ -237,7 +242,7 @@ class Executor:
             verify_inputs(self.settings.run_root / apply_id, self.store.files(apply_id,
                                                                               "input"))
         except InputChanged as e:
-            self._not_applied(apply_id, "changed", f"{e} Nothing was applied; run a new dry "
+            self._not_applied(apply_id, CHANGED, f"{e} Nothing was applied; run a new dry "
                                                     "run.")
             return
         self.store.save(new_run(fresh_id, entry.name, dry_argv, "dry-run",
@@ -267,7 +272,7 @@ class Executor:
                                                   "succeed, so nothing was applied. See it "
                                                   "for why.")
         elif fresh_record.output_hash != dry.output_hash:
-            self._not_applied(apply_id, "changed", "What this would change has changed since "
+            self._not_applied(apply_id, CHANGED, "What this would change has changed since "
                                                    "it was reviewed, so nothing was applied. "
                                                    "Review the fresh dry run.")
         else:

@@ -4,9 +4,10 @@ import json
 import shutil
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,14 +16,21 @@ from starlette.middleware.sessions import SessionMiddleware
 
 from . import files as run_files
 from .catalog import describe, engine_catalog
-from .executor import Executor, InputChanged, Requester, copy_inputs, new_run
+from .executor import (
+    FINAL_OUTCOMES,
+    Executor,
+    InputChanged,
+    Requester,
+    copy_inputs,
+    new_run,
+)
 from .forms import BadValues, build_argv, form_for
 from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .settings import Settings
-from .store import FINISHED, QUEUED, RunFile, RunRecord, RunStore
+from .store import FINISHED, QUEUED, RUN_KINDS, UNFINISHED, RunFile, RunRecord, RunStore
 
 # Every state-changing API request must carry this header. A browser can't add a custom
 # header to a cross-origin request without a CORS preflight, which this API never grants, so
@@ -34,6 +42,24 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Roles are read from the session at sign-in; a short session means removing someone from a
 # PD-Ops group in AD/Okta takes effect within a working day.
 SESSION_MAX_AGE_SECONDS = 8 * 3600
+
+
+MAX_HISTORY_PAGE = 200
+HISTORY_OUTCOMES = FINAL_OUTCOMES | {UNFINISHED}
+
+
+def parse_instant(name: str, value: str | None) -> datetime | None:
+    """An ISO 8601 date and time with a timezone, as UTC (like the engine's date inputs)."""
+    if not value:
+        return None
+    try:
+        instant = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(422, f"{name} must be an ISO 8601 date and time with a "
+                                 "timezone, e.g. 2026-11-02T00:00:00-06:00.") from None
+    if instant.tzinfo is None:
+        raise HTTPException(422, f"{name} needs a timezone, e.g. 2026-11-02T00:00:00-06:00.")
+    return instant.astimezone(timezone.utc)
 
 
 class RunRequest(BaseModel):
@@ -296,6 +322,22 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
     def queue(who: SignedIn):
         """The Writing run executing now, and those waiting for it, oldest first."""
         return store.queue()
+
+    @app.get("/api/runs")
+    def run_history(who: SignedIn, command: str | None = None, requester: str | None = None,
+                    since: str | None = None, before: str | None = None,
+                    outcome: str | None = None, kind: str | None = None,
+                    page: Annotated[int, Query(ge=1)] = 1,
+                    per_page: Annotated[int, Query(ge=1, le=MAX_HISTORY_PAGE)] = 50):
+        """The searchable Run history (#69), for every role: filters combine; newest first."""
+        if outcome is not None and outcome not in HISTORY_OUTCOMES:
+            raise HTTPException(422, f"outcome must be one of {sorted(HISTORY_OUTCOMES)}.")
+        if kind is not None and kind not in RUN_KINDS:
+            raise HTTPException(422, f"kind must be one of {sorted(RUN_KINDS)}.")
+        return store.search(command=command or None, requester=(requester or "").strip(),
+                            since=parse_instant("since", since),
+                            before=parse_instant("before", before), outcome=outcome,
+                            kind=kind, page=page, per_page=per_page)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, who: SignedIn):
