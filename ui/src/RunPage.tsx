@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { ApiError, applyRun, fileUrl, getRun, reviewRun, type Me, type Review,
-  type Run } from "./api";
+import { applyRun, cancelRun, fileUrl, freshDryRun, getRun, reviewRun, type Me,
+  type Outcome, type Review, type Run } from "./api";
+
+const POLL_MS = 1000;
 
 const SIGN = { add: "+", change: "~", delete: "−" } as const;
 
@@ -37,13 +39,80 @@ function ReviewPanel({ review }: { review: Review }) {
   );
 }
 
-const OUTCOME_LABELS: Record<Run["outcome"], string> = {
+const OUTCOME_LABELS: Record<Outcome, string> = {
   "succeeded": "Succeeded",
   "failed": "Failed",
   "usage-error": "Usage error",
   "auth-error": "Auth error: the service credential was rejected",
   "stopped": "Stopped",
+  "changed": "Not applied: the changes differ from what was reviewed",
 };
+
+function statusLabel(run: Run): string {
+  if (run.status === "queued") return "Waiting in the queue: one change runs at a time";
+  if (run.status === "running") {
+    return run.kind === "apply" ? "Applying… (a fresh dry run is checked first)" : "Running…";
+  }
+  return run.outcome ? OUTCOME_LABELS[run.outcome] : "Finished";
+}
+
+const runLink = (id: string) => `#/runs/${encodeURIComponent(id)}`;
+
+// Cancel (the requester, or any Approver) while a Run waits or executes; then, for a
+// Stopped apply, a fresh dry run with the same inputs shows what remains (ADR 0012).
+function RunControls({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const mine = run.requested_by === me.email;
+
+  async function act(step: () => Promise<Run>) {
+    setBusy(true);
+    setError("");
+    try {
+      const result = await step();
+      if (result.id === run.id) onChange(result);
+      else window.location.hash = runLink(result.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  let control = null;
+  if (run.status !== "finished" && (mine || me.role === "approver")) {
+    control = (
+      <button type="button" className="danger" disabled={busy || run.cancelled_by !== null}
+              onClick={() => act(() => cancelRun(run.id))}>
+        {run.cancelled_by ? "Cancelling…" : run.status === "queued" ? "Remove from the queue"
+          : "Cancel this Run"}
+      </button>
+    );
+  } else if (run.kind === "apply" && run.outcome === "stopped" && mine && me.role !== "viewer") {
+    control = (
+      <>
+        <p>{run.started_at ? "This apply was stopped and may have been partly applied."
+          : "This apply was stopped before it started."} Applies are safe to repeat: a fresh
+          dry run with the same inputs shows what remains.</p>
+        <button type="button" disabled={busy} onClick={() => act(() => freshDryRun(run.id))}>
+          Run a fresh dry run
+        </button>
+      </>
+    );
+  } else if (run.kind === "apply" && run.outcome === "changed" && run.fresh_dry_run_id) {
+    control = (
+      <p>Nothing was applied. <a href={runLink(run.fresh_dry_run_id)}>Review the fresh dry
+        run</a> to see what would change now.</p>
+    );
+  }
+  if (!control) return null;
+  return (
+    <section aria-label="Run controls" className="steps">
+      {control}
+      {error && <p className="error" role="alert">{error}</p>}
+    </section>
+  );
+}
 
 // Review, then Apply (#73): only for the admin who ran a dry run that succeeded. The service
 // enforces every gate; this only decides which step to offer.
@@ -57,8 +126,8 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
   }
   if (run.applied_run_id) {
     return (
-      <p className="notice">Applied: <a href={`#/runs/${encodeURIComponent(run.applied_run_id)}`}>
-        see the apply</a>.</p>
+      <p className="notice">Sent to be applied: <a href={runLink(run.applied_run_id)}>see
+        the apply</a>.</p>
     );
   }
 
@@ -68,14 +137,9 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
     try {
       const result = await step();
       if (result.id === run.id) onChange(result);
-      else window.location.hash = `#/runs/${encodeURIComponent(result.id)}`;
+      else window.location.hash = runLink(result.id);
     } catch (e) {
-      const fresh = e instanceof ApiError && typeof e.detail === "object" && e.detail !== null
-        ? (e.detail as { fresh_dry_run_id?: string }).fresh_dry_run_id : undefined;
-      if (fresh) {
-        sessionStorage.setItem("pd-ops-notice", e instanceof Error ? e.message : "");
-        window.location.hash = `#/runs/${encodeURIComponent(fresh)}`;
-      } else setError(e instanceof Error ? e.message : String(e));
+      setError(e instanceof Error ? e.message : String(e));
     } finally {
       setBusy(false);
     }
@@ -89,15 +153,16 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
         </button>
       ) : (
         <>
-          <p>Reviewed by you. Applying runs a fresh dry run first; if anything differs from
-            what you reviewed, nothing is applied and you'll see the new changes.</p>
+          <p>Reviewed by you. The apply waits its turn (one change runs at a time), then
+            runs a fresh dry run first; if anything differs from what you reviewed, nothing is
+            applied and you'll see the new changes.</p>
           <label className="check">
             <input type="checkbox" checked={understood} onChange={(e) => setUnderstood(e.target.checked)} />
             I understand this will change live data.
           </label>
           <button type="button" className="danger" disabled={busy || !understood}
                   onClick={() => act(() => applyRun(run.id))}>
-            {busy ? "Applying…" : "Apply these changes"}
+            {busy ? "Sending…" : "Apply these changes"}
           </button>
         </>
       )}
@@ -109,41 +174,55 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
 export function RunPage({ id, me }: { id: string; me: Me }) {
   const [run, setRun] = useState<Run | null>(null);
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
 
   useEffect(() => {
-    setNotice(sessionStorage.getItem("pd-ops-notice") ?? "");
-    sessionStorage.removeItem("pd-ops-notice");
+    setRun(null);
+    setError("");
     getRun(id).then(setRun).catch((e: Error) => setError(e.message));
   }, [id]);
+
+  // Runs execute in the background: re-read this one until it has finished.
+  const unfinished = run !== null && run.id === id && run.status !== "finished";
+  useEffect(() => {
+    if (!unfinished) return;
+    const timer = window.setTimeout(() => {
+      getRun(id).then(setRun).catch((e: Error) => setError(e.message));
+    }, POLL_MS);
+    return () => window.clearTimeout(timer);
+  }, [id, unfinished, run]);
 
   if (error) return <p className="error" role="alert">{error}</p>;
   if (!run) return <p>Loading…</p>;
   return (
     <article>
       <h1>{run.command} {run.argv.join(" ")}</h1>
-      <p className={`outcome ${run.outcome}`}>
-        {OUTCOME_LABELS[run.outcome]}{run.exit_code != null && ` (exit ${run.exit_code})`}
+      <p className={`outcome ${run.outcome ?? run.status}`} role="status">
+        {statusLabel(run)}{run.exit_code != null && ` (exit ${run.exit_code})`}
       </p>
-      {notice && <p className="error" role="alert">{notice}</p>}
       {run.kind === "dry-run" && (
-        <p className="notice"><strong>Dry run</strong>: nothing was changed.</p>
+        <p className="notice"><strong>Dry run</strong>: nothing is changed.</p>
       )}
       {run.kind === "apply" && run.applied_from && (
         <p className="notice"><strong>Apply</strong> of the reviewed{" "}
-          <a href={`#/runs/${encodeURIComponent(run.applied_from)}`}>dry run</a>.</p>
+          <a href={runLink(run.applied_from)}>dry run</a>
+          {run.fresh_dry_run_id && <>, checked against a{" "}
+            <a href={runLink(run.fresh_dry_run_id)}>fresh dry run</a></>}.</p>
       )}
       {run.message && <p className="error" role="alert">{run.message}</p>}
       {run.review && <ReviewPanel review={run.review} />}
       {/* Keyed by run: each dry run needs its own acknowledgement, even when Apply moves
           to a fresh dry run and React would otherwise reuse this component's state. */}
       <ApplySteps key={run.id} run={run} me={me} onChange={setRun} />
+      <RunControls key={`controls-${run.id}`} run={run} me={me} onChange={setRun} />
       <dl>
         <dt>Requested by</dt><dd>{run.requester_name} ({run.requested_by}, {run.requester_role})</dd>
-        <dt>Started</dt><dd>{new Date(run.started_at).toLocaleString()}</dd>
+        <dt>Requested</dt><dd>{new Date(run.queued_at).toLocaleString()}</dd>
+        <dt>Started</dt><dd>{run.started_at ? new Date(run.started_at).toLocaleString() : "—"}</dd>
+        {run.cancelled_by && <><dt>Cancelled by</dt><dd>{run.cancelled_by}</dd></>}
         <dt>Finished</dt><dd>{run.finished_at ? new Date(run.finished_at).toLocaleString() : "—"}</dd>
         <dt>Input hash</dt><dd><code>{run.input_hash.slice(0, 16)}…</code></dd>
-        <dt>Output hash</dt><dd><code>{run.output_hash.slice(0, 16)}…</code></dd>
+        {run.output_hash && <><dt>Output hash</dt>
+          <dd><code>{run.output_hash.slice(0, 16)}…</code></dd></>}
       </dl>
       {run.files.length > 0 && (
         <>

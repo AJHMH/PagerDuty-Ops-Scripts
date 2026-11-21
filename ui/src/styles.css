@@ -26,7 +26,10 @@ button:disabled { opacity: 0.6; cursor: default; }
 .error { color: var(--bad); }
 .outcome { font-weight: 600; }
 .outcome.succeeded { color: var(--ok); }
-.outcome.failed, .outcome.usage-error, .outcome.auth-error, .outcome.stopped { color: var(--bad); }
+.outcome.failed, .outcome.usage-error, .outcome.auth-error, .outcome.stopped,
+.outcome.changed { color: var(--bad); }
+.outcome.queued, .outcome.running { color: var(--accent); }
+.queue { margin-top: 2rem; border-top: 1px solid var(--line); }
 dl { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; }
 dt { color: var(--muted); }
 dd { margin: 0; }

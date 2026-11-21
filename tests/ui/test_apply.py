@@ -4,7 +4,7 @@ subprocess Runs of test-only fixture commands, which print APPLIED only when the
 import json
 
 import pytest
-from conftest import APPROVER, OPERATOR, VIEWER, admin_header
+from conftest import APPROVER, OPERATOR, VIEWER, admin_header, finished, wait
 
 OTHER_OPERATOR = admin_header("PD-Ops-Operator", email="bob@dallas.gov", name="Bob")
 
@@ -16,8 +16,7 @@ def dry_run(client, command="ui-writer", values=None, files=None, headers=OPERAT
                                headers=headers)
     else:
         response = client.post("/api/runs", json=body, headers=headers)
-    assert response.status_code == 201, response.text
-    created = response.json()
+    created = finished(client, response)
     assert created["kind"] == "dry-run"
     return created
 
@@ -42,7 +41,8 @@ def test_a_reviewed_dry_run_is_applied_with_yes_and_without_dry_run(client):
     dry = reviewed(client, values={"note": "x"})
     response = apply(client, dry["id"])
     assert response.status_code == 201, response.text
-    applied = response.json()
+    assert response.json()["status"] in ("queued", "running")
+    applied = wait(client, response.json()["id"])
     assert applied["kind"] == "apply"
     assert applied["argv"] == ["--note", "x", "-y"]
     assert (applied["outcome"], applied["stdout"]) == ("succeeded", "APPLIED\n")
@@ -55,14 +55,14 @@ def test_a_reviewed_dry_run_is_applied_with_yes_and_without_dry_run(client):
 
 def test_a_diff_first_command_is_applied_with_apply_and_yes(client):
     dry = reviewed(client, command="ui-differ")
-    applied = apply(client, dry["id"]).json()
+    applied = finished(client, apply(client, dry["id"]))
     assert (applied["argv"], applied["stdout"]) == (["--apply", "-y"], "APPLIED\n")
 
 
 def test_uploaded_inputs_are_reused_for_the_apply(client):
     upload = [("file.input", ("services.csv", b"service_id\n", "text/csv"))]
     dry = reviewed(client, files=upload)
-    applied = apply(client, dry["id"]).json()
+    applied = finished(client, apply(client, dry["id"]))
     assert applied["argv"] == ["--input", "inputs/input/services.csv", "-y"]
     inputs = [f for f in applied["files"] if f["role"] == "input"]
     assert [(f["path"], f["sha256"]) for f in inputs] == [
@@ -121,18 +121,19 @@ def test_an_input_changed_since_the_review_blocks_the_apply(client, settings):
 
 def test_a_fresh_dry_run_that_differs_blocks_the_apply_and_is_stored_for_review(client,
                                                                                  settings):
+    # The fresh dry run runs inside the writing slot, just before the apply (ADR 0012).
     dry = reviewed(client)
     settings.extra_env["UI_FIXTURE_DRIFT"] = "1"   # live state changes after the review
-    response = apply(client, dry["id"])
-    assert response.status_code == 409
-    detail = response.json()["detail"]
-    assert "changed" in detail["message"]
-    fresh = client.get(f"/api/runs/{detail['fresh_dry_run_id']}", headers=OPERATOR).json()
+    blocked = finished(client, apply(client, dry["id"]))
+    assert (blocked["kind"], blocked["outcome"]) == ("apply", "changed")
+    assert "changed" in blocked["message"]
+    assert blocked["stdout"] == ""                 # the apply itself never ran
+    fresh = client.get(f"/api/runs/{blocked['fresh_dry_run_id']}", headers=OPERATOR).json()
     assert fresh["kind"] == "dry-run"
     assert "+ drifted-service" in fresh["stdout"]
     assert fresh["output_hash"] != dry["output_hash"]
     assert fresh["reviewed_by"] is None
-    # Nothing was applied, and the original dry run is still unapplied.
+    # Nothing was applied, and the original dry run can be applied again.
     assert client.get(f"/api/runs/{dry['id']}", headers=OPERATOR).json()["applied_run_id"] is None
 
 
@@ -150,7 +151,7 @@ def test_an_apply_that_fails_is_recorded_with_its_outcome_and_message(client, se
                                                                        outcome):
     dry = reviewed(client)
     settings.extra_env["UI_FIXTURE_APPLY_EXIT"] = str(code)
-    applied = apply(client, dry["id"]).json()
+    applied = finished(client, apply(client, dry["id"]))
     assert (applied["kind"], applied["outcome"]) == ("apply", outcome)
     assert applied["message"] == f"Error: apply failed with exit {code}"
 
@@ -175,24 +176,23 @@ def test_state_changing_requests_need_the_ui_header(settings, catalog):
 # ---------- a failure while starting the apply doesn't strand the dry run ----------
 
 def test_an_apply_that_cannot_start_leaves_the_dry_run_applicable(client, monkeypatch):
-    import pagerduty_ops_ui.app as app_module
+    import pagerduty_ops_ui.executor as executor_module
 
     dry = reviewed(client)
-    real = app_module.run_command
-    calls = []
+    real = executor_module.run_command
 
     def flaky(entry, argv, **kwargs):
-        calls.append(argv)
         if "-y" in argv:  # the apply itself, after the fresh dry run
             raise OSError("no space left on device")
         return real(entry, argv, **kwargs)
 
-    monkeypatch.setattr(app_module, "run_command", flaky)
-    with pytest.raises(OSError):
-        apply(client, dry["id"])
+    monkeypatch.setattr(executor_module, "run_command", flaky)
+    failed = finished(client, apply(client, dry["id"]))
+    assert failed["outcome"] == "failed"
+    assert "no space left on device" in failed["message"]
     assert client.get(f"/api/runs/{dry['id']}", headers=OPERATOR).json()["applied_run_id"] is None
-    monkeypatch.setattr(app_module, "run_command", real)
-    assert apply(client, dry["id"]).status_code == 201
+    monkeypatch.setattr(executor_module, "run_command", real)
+    assert finished(client, apply(client, dry["id"]))["outcome"] == "succeeded"
 
 
 def test_a_log_file_argument_is_refused_because_the_service_captures_the_log(client):

@@ -56,7 +56,12 @@ export interface RunFile {
   sha256: string;
 }
 
-export type Outcome = "succeeded" | "failed" | "usage-error" | "auth-error" | "stopped";
+// "changed": an apply whose fresh dry run no longer matched the review, so nothing ran.
+export type Outcome = "succeeded" | "failed" | "usage-error" | "auth-error" | "stopped"
+  | "changed";
+
+// Runs execute in the background: applies wait "queued" for the one writing slot.
+export type Status = "queued" | "running" | "finished";
 
 export interface Run {
   id: string;
@@ -65,10 +70,14 @@ export interface Run {
   requested_by: string;
   requester_name: string;
   requester_role: Role;
-  started_at: string;
+  status: Status;
+  queued_at: string;
+  started_at: string | null;
   finished_at: string | null;
   exit_code: number | null;
-  outcome: Outcome;
+  outcome: Outcome | null;  // null until the Run has finished
+  cancelled_by: string | null;
+  fresh_dry_run_id: string | null;
   stdout: string;
   stderr: string;
   message: string | null;
@@ -143,6 +152,18 @@ export const reviewRun = (id: string) =>
   call<Run>(`/api/runs/${encodeURIComponent(id)}/review`, { method: "POST" });
 export const applyRun = (id: string) =>
   call<Run>(`/api/runs/${encodeURIComponent(id)}/apply`, { method: "POST" });
+
+export const cancelRun = (id: string) =>
+  call<Run>(`/api/runs/${encodeURIComponent(id)}/cancel`, { method: "POST" });
+// After a Stopped apply: dry-run the same command and inputs again to show what remains.
+export const freshDryRun = (id: string) =>
+  call<Run>(`/api/runs/${encodeURIComponent(id)}/fresh-dry-run`, { method: "POST" });
+
+export interface Queue {
+  executing: Run | null;
+  pending: Run[];
+}
+export const getQueue = () => call<Queue>("/api/queue");
 
 export const fileUrl = (runId: string, fileId: number) =>
   `/api/runs/${encodeURIComponent(runId)}/files/${fileId}`;
