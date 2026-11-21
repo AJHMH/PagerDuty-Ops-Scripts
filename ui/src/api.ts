@@ -165,5 +165,48 @@ export interface Queue {
 }
 export const getQueue = () => call<Queue>("/api/queue");
 
+// A row of the Run history (#69): what ran and how it ended, without output or log.
+export interface RunSummary {
+  id: string;
+  command: string;
+  argv: string[];
+  kind: Run["kind"];
+  status: Status;
+  outcome: Outcome | null;
+  requested_by: string;
+  requester_name: string;
+  requester_role: Role;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  applied_from: string | null;
+}
+
+export interface HistoryPage {
+  runs: RunSummary[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export interface HistoryFilters {
+  command?: string;
+  requester?: string;
+  since?: string;   // ISO 8601 with a timezone, inclusive
+  before?: string;  // exclusive
+  outcome?: string;
+  kind?: string;
+  page?: number;
+  per_page?: number;
+}
+
+export function getHistory(filters: HistoryFilters): Promise<HistoryPage> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  return call<HistoryPage>(`/api/runs?${query}`);
+}
+
 export const fileUrl = (runId: string, fileId: number) =>
   `/api/runs/${encodeURIComponent(runId)}/files/${fileId}`;

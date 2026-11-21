@@ -4,9 +4,10 @@ import json
 import shutil
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -34,6 +35,26 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Roles are read from the session at sign-in; a short session means removing someone from a
 # PD-Ops group in AD/Okta takes effect within a working day.
 SESSION_MAX_AGE_SECONDS = 8 * 3600
+
+
+MAX_HISTORY_PAGE = 200
+RUN_KINDS = frozenset({"report", "dry-run", "apply"})
+HISTORY_OUTCOMES = frozenset({"succeeded", "failed", "usage-error", "auth-error", "stopped",
+                              "changed"})
+
+
+def parse_instant(name: str, value: str | None) -> datetime | None:
+    """An ISO 8601 date and time with a timezone, as UTC (like the engine's date inputs)."""
+    if not value:
+        return None
+    try:
+        instant = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        raise HTTPException(422, f"{name} must be an ISO 8601 date and time with a "
+                                 "timezone, e.g. 2026-11-02T00:00:00-06:00.") from None
+    if instant.tzinfo is None:
+        raise HTTPException(422, f"{name} needs a timezone, e.g. 2026-11-02T00:00:00-06:00.")
+    return instant.astimezone(timezone.utc)
 
 
 class RunRequest(BaseModel):
@@ -296,6 +317,22 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
     def queue(who: SignedIn):
         """The Writing run executing now, and those waiting for it, oldest first."""
         return store.queue()
+
+    @app.get("/api/runs")
+    def run_history(who: SignedIn, command: str | None = None, requester: str | None = None,
+                    since: str | None = None, before: str | None = None,
+                    outcome: str | None = None, kind: str | None = None,
+                    page: Annotated[int, Query(ge=1)] = 1,
+                    per_page: Annotated[int, Query(ge=1, le=MAX_HISTORY_PAGE)] = 50):
+        """The searchable Run history (#69), for every role: filters combine; newest first."""
+        if outcome is not None and outcome not in HISTORY_OUTCOMES:
+            raise HTTPException(422, f"outcome must be one of {sorted(HISTORY_OUTCOMES)}.")
+        if kind is not None and kind not in RUN_KINDS:
+            raise HTTPException(422, f"kind must be one of {sorted(RUN_KINDS)}.")
+        return store.search(command=command or None, requester=(requester or "").strip(),
+                            since=parse_instant("since", since),
+                            before=parse_instant("before", before), outcome=outcome,
+                            kind=kind, page=page, per_page=per_page)
 
     @app.get("/api/runs/{run_id}")
     def get_run(run_id: str, who: SignedIn):

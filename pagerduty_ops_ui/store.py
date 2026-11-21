@@ -13,6 +13,8 @@ from sqlalchemy import (
     Unicode,
     UnicodeText,
     create_engine,
+    func,
+    or_,
     select,
     update,
 )
@@ -48,7 +50,7 @@ class RunRecord(Base):
     # slot), "running", then "finished" with an outcome. The queue is these rows, so it
     # survives a restart.
     status: Mapped[str] = mapped_column(Unicode(10), default="running", index=True)
-    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     timeout_seconds: Mapped[int] = mapped_column(Integer)
@@ -112,6 +114,19 @@ def _message(run: RunRecord) -> str | None:
 
 def file_dict(f: RunFile) -> dict:
     return {"id": f.id, "role": f.role, "path": f.path, "size": f.size, "sha256": f.sha256}
+
+
+def summary_dict(run: RunRecord) -> dict:
+    """A Run as a row of the history (#69): what it was and how it ended, without its
+    output, log or files."""
+    return {
+        "id": run.id, "command": run.command, "argv": list(run.argv), "kind": run.kind,
+        "status": run.status, "outcome": run.outcome,
+        "requested_by": run.requested_by, "requester_name": run.requester_name,
+        "requester_role": run.requester_role, "queued_at": _iso(run.queued_at),
+        "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
+        "applied_from": run.applied_from,
+    }
 
 
 def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
@@ -281,6 +296,39 @@ class RunStore:
                     .where(RunRecord.status == RUNNING, kind if kind_is_apply else ~kind)
                     .values(status=FINISHED, outcome="stopped", finished_at=now(), note=text))
         return pids
+
+    def search(self, *, command: str | None = None, requester: str | None = None,
+               since: datetime | None = None, before: datetime | None = None,
+               outcome: str | None = None, kind: str | None = None,
+               page: int = 1, per_page: int = 50) -> dict:
+        """The Run history (#69): Runs matching every filter given, newest first, one page
+        at a time. `requester` matches part of the requester's email or name, ignoring
+        case; `since` is inclusive and `before` exclusive, on when the Run was requested."""
+        conditions = []
+        if command:
+            conditions.append(RunRecord.command == command)
+        if requester:
+            needle = requester.lower()
+            conditions.append(or_(
+                func.lower(RunRecord.requested_by).contains(needle, autoescape=True),
+                func.lower(RunRecord.requester_name).contains(needle, autoescape=True)))
+        if since is not None:
+            conditions.append(RunRecord.queued_at >= since)
+        if before is not None:
+            conditions.append(RunRecord.queued_at < before)
+        if outcome:
+            conditions.append(RunRecord.outcome == outcome)
+        if kind:
+            conditions.append(RunRecord.kind == kind)
+        with Session(self.engine) as session:
+            total = session.scalar(select(func.count()).select_from(RunRecord)
+                                   .where(*conditions))
+            runs = session.scalars(
+                select(RunRecord).where(*conditions)
+                .order_by(RunRecord.queued_at.desc(), RunRecord.id.desc())
+                .offset((page - 1) * per_page).limit(per_page)).all()
+            return {"runs": [summary_dict(r) for r in runs], "total": total, "page": page,
+                    "per_page": per_page}
 
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:
