@@ -174,7 +174,7 @@ function LiveLog({ text, live }: { text: string; live: boolean }) {
   }, [text, live]);
   return (
     <>
-      <h2>Log{live && <span className="live" aria-live="off"> · live</span>}</h2>
+      <h2>Log{live && <span className="live"> · live</span>}</h2>
       <pre ref={ref} className="log" aria-busy={live}
            onScroll={(e) => {
              const pre = e.currentTarget;
