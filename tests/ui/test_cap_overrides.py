@@ -98,3 +98,64 @@ def test_the_form_marks_which_fields_are_caps(client):
     assert caps["note"] is False
     report = client.get("/api/commands/ui-fixture/form", headers=VIEWER).json()
     assert not any(f["cap"] for f in report["fields"])
+
+
+def test_a_reason_containing_a_secret_is_refused(client):
+    from conftest import SECRET
+
+    response = dry_run(client, {"max_deletes": 10}, f"token {SECRET}")
+    assert response.status_code == 422
+    assert SECRET not in response.text
+
+
+# ---------- the apply checks the override itself, not just its dry run's word ----------
+
+def unrecorded(settings, run_id, **values):
+    """Change what was recorded with a dry run, as an older version of the service (before
+    migration 0003) or an engine whose cap default changed since would leave it."""
+    from sqlalchemy import update
+
+    from pagerduty_ops_ui.store import RunRecord, RunStore
+
+    with RunStore(settings.database_url).engine.begin() as db:
+        db.execute(update(RunRecord).where(RunRecord.id == run_id).values(**values))
+
+
+def reviewed_with_override(client):
+    dry = finished(client, dry_run(client, {"max_deletes": 10}, "CHG0042"))
+    assert client.post(f"/api/runs/{dry['id']}/review", headers=OPERATOR).status_code == 200
+    return dry
+
+
+def test_an_apply_raising_a_cap_with_no_recorded_reason_is_refused(client, settings):
+    dry = reviewed_with_override(client)
+    unrecorded(settings, dry["id"], cap_override_reason=None, cap_override_by=None,
+               cap_overrides=None)
+    response = client.post(f"/api/runs/{dry['id']}/apply", headers=OPERATOR)
+    assert response.status_code == 409
+    assert "--max-deletes" in response.json()["detail"]
+    # Nothing was queued, and the dry run is still free to be applied after a new review.
+    assert client.get(f"/api/runs/{dry['id']}", headers=OPERATOR).json()["applied_run_id"] is None
+
+
+def test_an_apply_whose_caps_differ_from_the_recorded_override_is_refused(client, settings):
+    dry = reviewed_with_override(client)
+    unrecorded(settings, dry["id"],
+               cap_overrides=[{"flag": "--max-deletes", "default": 5, "value": 8}])
+    assert client.post(f"/api/runs/{dry['id']}/apply", headers=OPERATOR).status_code == 409
+
+
+def test_a_fresh_dry_run_after_a_stopped_apply_checks_the_override_too(client, settings):
+    dry = reviewed_with_override(client)
+    settings.extra_env["UI_FIXTURE_APPLY_SLEEP"] = "10"
+    applying = client.post(f"/api/runs/{dry['id']}/apply", headers=OPERATOR).json()
+    from conftest import wait_until
+
+    wait_until(lambda: client.get(f"/api/runs/{applying['id']}",
+                                  headers=OPERATOR).json()["status"] == "running")
+    client.post(f"/api/runs/{applying['id']}/cancel", headers=OPERATOR)
+    assert wait(client, applying["id"])["outcome"] == "stopped"
+    unrecorded(settings, dry["id"], cap_override_reason=None, cap_override_by=None,
+               cap_overrides=None)
+    response = client.post(f"/api/runs/{applying['id']}/fresh-dry-run", headers=OPERATOR)
+    assert response.status_code == 409

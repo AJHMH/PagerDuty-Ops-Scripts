@@ -215,18 +215,23 @@ def assess(module: ModuleType, argv: list[str], builder: str = "build_parser", *
                       _raised_caps(parser, args, risk.cap_flags))
 
 
-def _raised_caps(parser, args, cap_flags) -> tuple[RaisedCap, ...]:
-    """The declared caps this argv sets above the parser's default (lowering one is fine)."""
+def _raised_caps(parser: argparse.ArgumentParser, args: argparse.Namespace,
+                 cap_flags: tuple[str, ...]) -> tuple[RaisedCap, ...]:
+    """The declared caps this argv sets above the parser's default (lowering one is fine).
+
+    Fails closed: a declared cap the parser doesn't have raises LookupError, so a typo in a
+    declaration can't quietly switch the check off.
+    """
     raised = []
     for flag in cap_flags:
-        for action in _all_actions(parser, args):
-            if flag not in action.option_strings:
-                continue
-            value = getattr(args, action.dest, None)
-            if (isinstance(value, (int, float)) and isinstance(action.default, (int, float))
-                    and value > action.default):
-                raised.append(RaisedCap(flag, action.default, value))
-            break
+        action = next((a for a in _all_actions(parser, args) if flag in a.option_strings),
+                      None)
+        if action is None:
+            raise LookupError(f"cap {flag} is declared but the parser has no such option")
+        value = getattr(args, action.dest, None)
+        if (isinstance(value, (int, float)) and isinstance(action.default, (int, float))
+                and value > action.default):
+            raised.append(RaisedCap(flag, action.default, value))
     return tuple(raised)
 
 

@@ -205,3 +205,24 @@ def test_raised_caps_cover_each_capped_command():
                             str(DEFAULT_MAX_WRITES * 2)]).raised_caps
     assert [(c.flag, c.default, c.value) for c in caps] == [
         ("--max-writes", DEFAULT_MAX_WRITES, DEFAULT_MAX_WRITES * 2)]
+
+
+@pytest.mark.parametrize("argv", [
+    ["apply", "-i", "bs.json", "--max-d", "40"],          # an argparse prefix
+    ["apply", "-i", "bs.json", "--max-deletes=40"],       # an attached value
+    ["apply", "-i", "bs.json", "--max-deletes", "1", "--max-deletes", "40"],  # the last wins
+])
+def test_raised_caps_read_the_argv_as_the_parser_does(argv):
+    assert [(c.flag, c.value) for c in assess(business_services, argv).raised_caps] == [
+        ("--max-deletes", 40)]
+
+
+def test_a_declared_cap_the_parser_lacks_fails_closed(monkeypatch):
+    # A typo in cap_flags must not silently switch the check off.
+    from pagerduty_ops.risk import writes_with_apply
+
+    declaration = dict(business_services.RISK)
+    declaration["apply"] = writes_with_apply(cap_flags=("--max-delete",))
+    monkeypatch.setattr(business_services, "RISK", declaration)
+    with pytest.raises(LookupError, match="--max-delete"):
+        assess(business_services, ["apply", "-i", "bs.json"])

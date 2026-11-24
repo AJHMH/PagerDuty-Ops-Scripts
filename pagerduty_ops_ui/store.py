@@ -21,6 +21,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, load_only, mapped_column
 
 from .migrate import check_schema
+from .overrides import MAX_REASON_LENGTH, CapOverride
 from .review import review
 
 QUEUED, RUNNING, FINISHED = "queued", "running", "finished"
@@ -77,7 +78,7 @@ class RunRecord(Base):
     applied_run_id: Mapped[str | None] = mapped_column(Unicode(36))
     # A write cap raised above its default needs a recorded reason (#75): the reason, who
     # gave it, and the caps as [{flag, default, value}]. An apply carries its dry run's.
-    cap_override_reason: Mapped[str | None] = mapped_column(Unicode(500))
+    cap_override_reason: Mapped[str | None] = mapped_column(Unicode(MAX_REASON_LENGTH))
     cap_override_by: Mapped[str | None] = mapped_column(Unicode(320))
     cap_overrides: Mapped[list | None] = mapped_column(JSON)
     # An apply records the reviewed dry run it came from, and the fresh dry run that was
@@ -134,11 +135,9 @@ SUMMARY_COLUMNS = (
 
 
 def cap_override(run: RunRecord) -> dict | None:
-    """A Run's cap override (#75), or None if it raised no cap."""
-    if run.cap_override_reason is None:
-        return None
-    return {"reason": run.cap_override_reason, "by": run.cap_override_by,
-            "caps": list(run.cap_overrides or [])}
+    """A Run's cap override (#75) as the API shows it, or None if it raised no cap."""
+    override = CapOverride.of(run)
+    return override.as_dict() if override else None
 
 
 def summary_dict(run: RunRecord) -> dict:

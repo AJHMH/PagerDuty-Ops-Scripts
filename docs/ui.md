@@ -94,9 +94,10 @@ A `[dry-run]` line whose verb isn't recognised counts as an "other change", unle
 
 A command's write caps (`--max-deletes`, `--max-writes`, `--max-services`) are named in its risk declaration (`cap_flags`), and the engine's `assess()` reports which ones an argv raises above the parser's default (`raised_caps`). The UI keeps no list of its own.
 
-- **A reason is required.** A Run that raises a cap needs `cap_override_reason` in its request (JSON, or the multipart `run` part): non-blank, at most 500 characters. Without one it is refused (422) before anything starts. Lowering a cap, or leaving it at its default, needs no reason, and a reason sent with no raised cap is not recorded.
-- **What is recorded.** The Run stores the reason, who gave it, and each raised cap as `{flag, default, value}`. `cap_override` is shown on the Run, in `GET /api/runs/{id}` and in the history.
-- **Applies.** An apply reuses the reviewed dry run's arguments (the identical-inputs rule), so its caps are the reviewed ones. The apply, its fresh dry run, and any fresh dry run after a Stopped apply carry the dry run's override.
+- **A reason is required.** A Run that raises a cap needs `cap_override_reason` in its request (JSON, or the multipart `run` part): non-blank, at most 500 characters, and, like an argument, never containing a secret value. Without one it is refused (422) before anything starts. Lowering a cap, or leaving it at its default, needs no reason, and a reason sent with no raised cap is not recorded.
+- **What is recorded.** The Run stores the reason, who gave it, and each raised cap as `{flag, default, value}`. `cap_override` is shown on the Run, in `GET /api/runs/{id}` and in the history, where each row spells it out.
+- **Applies.** An apply reuses the reviewed dry run's arguments (the identical-inputs rule), so its caps are the reviewed ones, and it carries the dry run's override, as do its fresh dry run and any fresh dry run after a Stopped apply. Each of these also checks for itself that every cap the engine says it raises has a matching override on record; otherwise it is refused (409) and a new dry run with a reason is needed. That covers a dry run recorded before overrides existed, and a cap default changed in the engine since the review.
+- **No silent caps.** A declared cap the parser doesn't have makes `assess()` fail closed, and a unit test checks that every declared cap is a numeric option of its command.
 - **The form.** Each field says whether it is a cap (`cap: true`). The run form asks for the reason as soon as a cap is set above its default.
 
 ## Apply (#73, ADRs 0003 and 0011)
