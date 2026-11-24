@@ -90,6 +90,16 @@ A `[dry-run]` line whose verb isn't recognised counts as an "other change", unle
 - `input_hash`: the command, the argv without its mode flags (`--dry-run`, `--apply`, `-y`, `--yes`), and each uploaded file's hash. A dry run and the apply of the same inputs therefore share it.
 - `output_hash`: the classified diff lines and each output file's hash. Log timestamps don't change it.
 
+## Cap overrides (#75, ADR 0003)
+
+A command's write caps (`--max-deletes`, `--max-writes`, `--max-services`) are named in its risk declaration (`cap_flags`), and the engine's `assess()` reports which ones an argv raises above the parser's default (`raised_caps`). The UI keeps no list of its own.
+
+- **A reason is required.** A Run that raises a cap needs `cap_override_reason` in its request (JSON, or the multipart `run` part): non-blank, at most 500 characters, and, like an argument, never containing a secret value. Without one it is refused (422) before anything starts. Lowering a cap, or leaving it at its default, needs no reason, and a reason sent with no raised cap is not recorded.
+- **What is recorded.** The Run stores the reason, who gave it, and each raised cap as `{flag, default, value}`. `cap_override` is shown on the Run, in `GET /api/runs/{id}` and in the history, where each row spells it out.
+- **Applies.** An apply reuses the reviewed dry run's arguments (the identical-inputs rule), so its caps are the reviewed ones, and it carries the dry run's override, as do its fresh dry run and any fresh dry run after a Stopped apply. Each of these also checks for itself that every cap the engine says it raises has a matching override on record; otherwise it is refused (409) and a new dry run with a reason is needed. That covers a dry run recorded before overrides existed, and a cap default changed in the engine since the review.
+- **No silent caps.** A declared cap the parser doesn't have makes `assess()` fail closed, and a unit test checks that every declared cap is a numeric option of its command.
+- **The form.** Each field says whether it is a cap (`cap: true`). The run form asks for the reason as soon as a cap is set above its default.
+
 ## Apply (#73, ADRs 0003 and 0011)
 
 1. **Run and review.** The admin who ran a dry run that succeeded and completed records that they reviewed it: `POST /api/runs/{id}/review`. Only that admin can review it, and only Operators and Approvers can review at all.
@@ -100,8 +110,6 @@ A `[dry-run]` line whose verb isn't recognised counts as an "other change", unle
    - **Fresh dry run:** in its turn, inside the slot, a fresh dry run of the same inputs runs and is stored; the apply records it as `fresh_dry_run_id`. If it doesn't succeed, nothing is applied (`failed`). If its `output_hash` differs from the reviewed one, nothing is applied either: the outcome is `changed`, and that new dry run must be reviewed instead. Either way the reviewed dry run can be applied again.
    - **The command line:** only then is the apply run, with the mode-neutral argv plus `-y`, or `--apply -y` for diff-first commands. `-y` is added only after every gate has passed.
    - **Once only:** a dry run is applied at most once. An atomic claim on `applied_run_id` covers concurrent requests too.
-
-Cap overrides are #75.
 
 ## Run history (#69)
 
@@ -210,5 +218,5 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 
 These are later tickets:
 - the Windows host packaging (#71);
-- the rest of Phase 2: cap overrides (#75), and the Ledger and 90-day purge (#76);
+- the rest of Phase 2: the Ledger and 90-day purge (#76);
 - Phase 3: Approvals (#77) and what follows them.

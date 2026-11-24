@@ -10,7 +10,7 @@ import time
 from pagerduty_ops.cli import add_logging_args, add_token_args
 from pagerduty_ops.risk import writes_with_dry_run
 
-RISK = writes_with_dry_run(irreversible_flags=("--purge",))
+RISK = writes_with_dry_run(irreversible_flags=("--purge",), cap_flags=("--max-deletes",))
 
 
 def build_parser():
@@ -31,6 +31,8 @@ def build_parser():
     p.add_argument("--fail", action="store_true", help="Exit 1 before previewing anything.")
     p.add_argument("--purge", action="store_true", help="Delete what isn't listed (irreversible).")
     p.add_argument("-i", "--input", help="A CSV whose first line appears in the preview.")
+    p.add_argument("--max-deletes", type=int, default=5,
+                   help="Refuse to delete more than this many (default 5).")
     return p
 
 

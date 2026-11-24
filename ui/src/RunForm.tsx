@@ -55,6 +55,7 @@ export function RunForm({ role }: { role: Role }) {
   const [state, setState] = useState<Record<string, FieldValue>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [reason, setReason] = useState("");
 
   useEffect(() => {
     getCommands()
@@ -89,6 +90,13 @@ export function RunForm({ role }: { role: Role }) {
     [form, subcommand]);
   const set = (dest: string, v: FieldValue) => setState((s) => ({ ...s, [dest]: v }));
   const writes = sub ? sub.writes : Boolean(form?.writes);
+  // Write caps (marked by the engine) set above their defaults: the service refuses these
+  // without a recorded reason (#75), so ask for one as soon as a cap goes up.
+  const raised = [...(form?.fields ?? []), ...(sub?.fields ?? [])].filter((f) => {
+    const v = state[f.dest];
+    return f.cap && typeof f.default === "number" && v !== undefined && v !== ""
+      && Number(v) > f.default;
+  });
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -97,7 +105,8 @@ export function RunForm({ role }: { role: Role }) {
     setError("");
     try {
       const { values, files } = collect([...form.fields, ...(sub?.fields ?? [])], state);
-      const run = await startRun(command, subcommand, values, files);
+      const run = await startRun(command, subcommand, values, files,
+                                 raised.length ? reason.trim() : undefined);
       window.location.hash = `#/runs/${encodeURIComponent(run.id)}`;
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -130,6 +139,15 @@ export function RunForm({ role }: { role: Role }) {
       )}
       {form && <Fields fields={form.fields} state={state} set={set} />}
       {sub && <Fields fields={sub.fields} state={state} set={set} />}
+      {raised.length > 0 && (
+        <label>
+          Why raise {raised.map((f) => f.flags[f.flags.length - 1]).join(" and ")} above
+          the default ({raised.map((f) => f.default).join(", ")})?
+          <textarea required maxLength={500} rows={2} value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder="E.g. the change ticket and why this Run may change more than usual" />
+        </label>
+      )}
       {writes && (
         <p className="notice">This command writes. It will run as a <strong>dry run</strong>:
           you'll see what it would change, and nothing is changed.</p>

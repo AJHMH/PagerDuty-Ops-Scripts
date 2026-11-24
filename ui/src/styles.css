@@ -75,3 +75,6 @@ header nav a { margin: 0 0.25rem; }
 button.link { background: none; border: none; color: var(--accent); padding: 0;
               text-decoration: underline; cursor: pointer; margin-top: 1rem; }
 .hint { color: var(--muted, #555); font-size: 0.9em; margin-top: 0.5rem; }
+.badge { font-size: 0.8em; font-weight: 600; color: var(--bad); }
+.override-line { margin: 0.15rem 0 0; font-size: 0.85em; }
+.notice.override { border-left-color: var(--bad); }

@@ -166,7 +166,12 @@ export function HistoryPage({ hash }: { hash: string }) {
                   <tr key={run.id}>
                     <td>{new Date(run.queued_at).toLocaleString()}</td>
                     <td><a href={`#/runs/${encodeURIComponent(run.id)}`}>
-                      {run.command} {run.argv.join(" ")}</a></td>
+                      {run.command} {run.argv.join(" ")}</a>
+                      {run.cap_override && (
+                        <p className="override-line"><span className="badge">Cap override
+                        </span> {run.cap_override.caps.map((c) => `${c.flag} ${c.value}`)
+                          .join(", ")}: “{run.cap_override.reason}” ({run.cap_override.by})</p>
+                      )}</td>
                     <td>{RUN_KINDS.find(([v]) => v === run.kind)?.[1] ?? run.kind}</td>
                     <td title={run.requested_by}>{run.requester_name}</td>
                     <td className={`outcome ${run.outcome ?? run.status}`}>{label(run)}</td>

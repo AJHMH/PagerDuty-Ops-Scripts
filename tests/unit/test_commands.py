@@ -387,3 +387,37 @@ def test_maintenance_window_idempotency_skips_existing(monkeypatch, tmp_path, to
 
     assert main([str(csv_path), "--from-email", "ops@x.com", "-y"]) == 0
     assert all(c.request.method == "GET" for c in responses.calls)  # no POST
+
+
+def test_every_declared_cap_is_a_numeric_option_of_its_parser():
+    # Raising a cap needs a recorded reason in the UI (#75), judged against the parser's
+    # default: each cap the risk declarations name must exist there with a number default.
+    import argparse
+
+    from pagerduty_ops.risk import BUILDER_ATTRS, Risk, declarations
+
+    def options(parser):
+        found = {}
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                continue
+            for flag in action.option_strings:
+                found[flag] = action
+        return found
+
+    for module in COMMAND_MODULES:
+        for builder, declaration in declarations(module).items():
+            assert builder in BUILDER_ATTRS
+            parser = getattr(module, builder)()
+            subparsers = {name: sub for a in parser._actions
+                          if isinstance(a, argparse._SubParsersAction)
+                          for name, sub in a.choices.items()}
+            items = ([(None, declaration)] if isinstance(declaration, Risk)
+                     else list(declaration.items()))
+            for name, risk in items:
+                actions = options(subparsers[name] if name else parser)
+                for flag in risk.cap_flags:
+                    assert flag in actions, f"{module.__name__} {name}: no {flag}"
+                    default = actions[flag].default
+                    assert isinstance(default, (int, float)) and not isinstance(default, bool), (
+                        f"{module.__name__} {name}: {flag} needs a numeric default")

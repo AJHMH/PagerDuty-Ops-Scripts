@@ -27,10 +27,19 @@ from .executor import (
 from .forms import BadValues, build_argv, form_for
 from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
+from .overrides import MAX_REASON_LENGTH, CapOverride, check_reviewed, record_override
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .settings import Settings
-from .store import FINISHED, QUEUED, RUN_KINDS, UNFINISHED, RunFile, RunRecord, RunStore
+from .store import (
+    FINISHED,
+    QUEUED,
+    RUN_KINDS,
+    UNFINISHED,
+    RunFile,
+    RunRecord,
+    RunStore,
+)
 
 # Every state-changing API request must carry this header. A browser can't add a custom
 # header to a cross-origin request without a CORS preflight, which this API never grants, so
@@ -42,7 +51,6 @@ SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
 # Roles are read from the session at sign-in; a short session means removing someone from a
 # PD-Ops group in AD/Okta takes effect within a working day.
 SESSION_MAX_AGE_SECONDS = 8 * 3600
-
 
 MAX_HISTORY_PAGE = 200
 HISTORY_OUTCOMES = FINAL_OUTCOMES | {UNFINISHED}
@@ -69,6 +77,8 @@ class RunRequest(BaseModel):
     argv: list[str] | None = Field(default=None, max_length=200)
     subcommand: str | None = None
     values: dict | None = None
+    # Why a write cap is raised above its default (#75); required exactly when one is.
+    cap_override_reason: str | None = Field(default=None, max_length=MAX_REASON_LENGTH)
 
 
 async def read_run_request(request: Request, max_upload_bytes: int, max_request_bytes: int):
@@ -196,13 +206,16 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         try:  # uploads first: the gate's assessment may read an uploaded Plan
             await run_in_threadpool(run_files.write_uploads, run_dir, uploads, upload_paths)
             argv, verdict = gate(entry, argv, run_dir, settings.secret_env.values(), role)
+            override = record_override(verdict, body.cap_override_reason, admin.email,
+                                       settings.secret_env.values())
         except BaseException:
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
         return start_now(new_run(run_id, entry.name, argv,
                                  "dry-run" if verdict.writes else "report",
                                  Requester(admin.email, admin.name, role.label), inputs,
-                                 timeout_seconds=timeout_for(verdict)), inputs)
+                                 timeout_seconds=timeout_for(verdict), override=override),
+                         inputs)
 
     def timeout_for(verdict) -> int:
         """2 hours, or the command's declared timeout (ADRs 0010, 0012)."""
@@ -265,11 +278,15 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         try:
             _, apply_argv, verdict = gate_apply(entry, neutral, settings.run_root / run_id,
                                                 settings.secret_env.values())
+            # The apply raises the reviewed caps (identical inputs); check their reason is on
+            # record rather than trusting the dry run, which an older version may have made.
+            check_reviewed(verdict, CapOverride.of(store.record(run_id)))
             inputs = copied_inputs(run_id, apply_id)
             queued = store.save(new_run(
                 apply_id, entry.name, apply_argv, "apply",
                 Requester(admin.email, admin.name, role.label), inputs,
-                timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id),
+                timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id,
+                override=CapOverride.of(store.record(run_id))),
                 inputs)
         except BaseException:
             store.release_apply(run_id, apply_id)
@@ -314,9 +331,17 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             raise HTTPException(404, f"Unknown command {dry.command!r}.")
         fresh_id = str(uuid.uuid4())
         inputs = copied_inputs(dry.id, fresh_id)
-        return start_now(new_run(fresh_id, entry.name, list(dry.argv), "dry-run",
+        try:  # the same rules as any dry run, and its caps' reason must be on record
+            argv, verdict = gate(entry, list(dry.argv), settings.run_root / fresh_id,
+                                 settings.secret_env.values(), role)
+            check_reviewed(verdict, CapOverride.of(dry))
+        except BaseException:
+            shutil.rmtree(settings.run_root / fresh_id, ignore_errors=True)
+            raise
+        return start_now(new_run(fresh_id, entry.name, argv, "dry-run",
                                  Requester(admin.email, admin.name, role.label), inputs,
-                                 timeout_seconds=dry.timeout_seconds), inputs)
+                                 timeout_seconds=dry.timeout_seconds,
+                                 override=CapOverride.of(dry)), inputs)
 
     @app.get("/api/queue")
     def queue(who: SignedIn):
