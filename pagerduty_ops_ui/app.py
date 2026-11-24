@@ -30,7 +30,16 @@ from .identity import Admin, IdentityProvider, OktaIdentity
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .settings import Settings
-from .store import FINISHED, QUEUED, RUN_KINDS, UNFINISHED, RunFile, RunRecord, RunStore
+from .store import (
+    FINISHED,
+    QUEUED,
+    RUN_KINDS,
+    UNFINISHED,
+    RunFile,
+    RunRecord,
+    RunStore,
+    cap_override,
+)
 
 # Every state-changing API request must carry this header. A browser can't add a custom
 # header to a cross-origin request without a CORS preflight, which this API never grants, so
@@ -45,6 +54,23 @@ SESSION_MAX_AGE_SECONDS = 8 * 3600
 
 
 MAX_HISTORY_PAGE = 200
+MAX_REASON_LENGTH = 500
+
+
+def override_for(verdict, reason: str | None, admin: Admin) -> dict | None:
+    """The cap override a Run records (#75): required when the engine says the argv raises a
+    write cap above its default (ADR 0003), and only then recorded."""
+    if not verdict.raised_caps:
+        return None
+    reason = (reason or "").strip()
+    if not reason:
+        caps = ", ".join(f"{c.flag} to {c.value} (default {c.default})"
+                         for c in verdict.raised_caps)
+        raise HTTPException(422, f"Raising {caps} needs an override reason: say why this Run "
+                                 "may change more than usual.")
+    return {"reason": reason, "by": admin.email,
+            "caps": [{"flag": c.flag, "default": c.default, "value": c.value}
+                     for c in verdict.raised_caps]}
 HISTORY_OUTCOMES = FINAL_OUTCOMES | {UNFINISHED}
 
 
@@ -69,6 +95,8 @@ class RunRequest(BaseModel):
     argv: list[str] | None = Field(default=None, max_length=200)
     subcommand: str | None = None
     values: dict | None = None
+    # Why a write cap is raised above its default (#75); required exactly when one is.
+    cap_override_reason: str | None = Field(default=None, max_length=MAX_REASON_LENGTH)
 
 
 async def read_run_request(request: Request, max_upload_bytes: int, max_request_bytes: int):
@@ -196,13 +224,15 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         try:  # uploads first: the gate's assessment may read an uploaded Plan
             await run_in_threadpool(run_files.write_uploads, run_dir, uploads, upload_paths)
             argv, verdict = gate(entry, argv, run_dir, settings.secret_env.values(), role)
+            override = override_for(verdict, body.cap_override_reason, admin)
         except BaseException:
             shutil.rmtree(run_dir, ignore_errors=True)
             raise
         return start_now(new_run(run_id, entry.name, argv,
                                  "dry-run" if verdict.writes else "report",
                                  Requester(admin.email, admin.name, role.label), inputs,
-                                 timeout_seconds=timeout_for(verdict)), inputs)
+                                 timeout_seconds=timeout_for(verdict), override=override),
+                         inputs)
 
     def timeout_for(verdict) -> int:
         """2 hours, or the command's declared timeout (ADRs 0010, 0012)."""
@@ -269,7 +299,8 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             queued = store.save(new_run(
                 apply_id, entry.name, apply_argv, "apply",
                 Requester(admin.email, admin.name, role.label), inputs,
-                timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id),
+                timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id,
+                override=dry["cap_override"]),  # the reviewed caps, so the reviewed reason
                 inputs)
         except BaseException:
             store.release_apply(run_id, apply_id)
@@ -316,7 +347,8 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         inputs = copied_inputs(dry.id, fresh_id)
         return start_now(new_run(fresh_id, entry.name, list(dry.argv), "dry-run",
                                  Requester(admin.email, admin.name, role.label), inputs,
-                                 timeout_seconds=dry.timeout_seconds), inputs)
+                                 timeout_seconds=dry.timeout_seconds,
+                                 override=cap_override(dry)), inputs)
 
     @app.get("/api/queue")
     def queue(who: SignedIn):

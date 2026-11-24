@@ -75,6 +75,11 @@ class RunRecord(Base):
     reviewed_by: Mapped[str | None] = mapped_column(Unicode(320))
     reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     applied_run_id: Mapped[str | None] = mapped_column(Unicode(36))
+    # A write cap raised above its default needs a recorded reason (#75): the reason, who
+    # gave it, and the caps as [{flag, default, value}]. An apply carries its dry run's.
+    cap_override_reason: Mapped[str | None] = mapped_column(Unicode(500))
+    cap_override_by: Mapped[str | None] = mapped_column(Unicode(320))
+    cap_overrides: Mapped[list | None] = mapped_column(JSON)
     # An apply records the reviewed dry run it came from, and the fresh dry run that was
     # compared with it inside the writing slot (ADR 0011).
     applied_from: Mapped[str | None] = mapped_column(Unicode(36))
@@ -123,8 +128,17 @@ SUMMARY_COLUMNS = (
     RunRecord.id, RunRecord.command, RunRecord.argv, RunRecord.kind, RunRecord.status,
     RunRecord.outcome, RunRecord.requested_by, RunRecord.requester_name,
     RunRecord.requester_role, RunRecord.queued_at, RunRecord.started_at,
-    RunRecord.finished_at, RunRecord.applied_from,
+    RunRecord.finished_at, RunRecord.applied_from, RunRecord.cap_override_reason,
+    RunRecord.cap_override_by, RunRecord.cap_overrides,
 )
+
+
+def cap_override(run: RunRecord) -> dict | None:
+    """A Run's cap override (#75), or None if it raised no cap."""
+    if run.cap_override_reason is None:
+        return None
+    return {"reason": run.cap_override_reason, "by": run.cap_override_by,
+            "caps": list(run.cap_overrides or [])}
 
 
 def summary_dict(run: RunRecord) -> dict:
@@ -136,7 +150,7 @@ def summary_dict(run: RunRecord) -> dict:
         "requested_by": run.requested_by, "requester_name": run.requester_name,
         "requester_role": run.requester_role, "queued_at": _iso(run.queued_at),
         "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
-        "applied_from": run.applied_from,
+        "applied_from": run.applied_from, "cap_override": cap_override(run),
     }
 
 

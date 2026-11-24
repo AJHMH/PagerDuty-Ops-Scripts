@@ -31,6 +31,7 @@ export interface Field {
   metavar: string | null;
   multiple: boolean;
   group: number | null;
+  cap: boolean;  // a write cap (from the engine): raising it needs an override reason (#75)
 }
 
 export interface Subcommand {
@@ -96,6 +97,14 @@ export interface Run {
   input_hash: string;
   output_hash: string;
   review: Review | null;
+  cap_override: CapOverride | null;
+}
+
+// A write cap raised above its default, with the reason recorded for it (#75).
+export interface CapOverride {
+  reason: string;
+  by: string;
+  caps: { flag: string; default: number; value: number }[];
 }
 
 export type LineKind = "add" | "change" | "delete" | "other" | "detail" | "info" | "context";
@@ -142,8 +151,10 @@ export type Values = Record<string, string | number | boolean | string[]>;
 
 // Form values go to the service, which builds the command line from the form (ADR 0004).
 export function startRun(command: string, subcommand: string | null, values: Values,
-                         files: Record<string, File[]>): Promise<Run> {
-  const body = { command, subcommand, values };
+                         files: Record<string, File[]>,
+                         capOverrideReason?: string): Promise<Run> {
+  const body = { command, subcommand, values,
+    ...(capOverrideReason ? { cap_override_reason: capOverrideReason } : {}) };
   const uploads = Object.entries(files).filter(([, list]) => list.length > 0);
   if (uploads.length === 0) {
     return call<Run>("/api/runs", { method: "POST", body: JSON.stringify(body) });
@@ -186,6 +197,7 @@ export interface RunSummary {
   started_at: string | null;
   finished_at: string | null;
   applied_from: string | null;
+  cap_override: CapOverride | null;
 }
 
 export interface HistoryPage {

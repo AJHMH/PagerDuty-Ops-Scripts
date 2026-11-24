@@ -238,6 +238,11 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
           {run.fresh_dry_run_id && <>, checked against a{" "}
             <a href={runLink(run.fresh_dry_run_id)}>fresh dry run</a></>}.</p>
       )}
+      {run.cap_override && (
+        <p className="notice override"><strong>Cap override</strong>:{" "}
+          {run.cap_override.caps.map((c) => `${c.flag} ${c.value} (default ${c.default})`)
+            .join(", ")}, by {run.cap_override.by}. Reason: “{run.cap_override.reason}”</p>
+      )}
       {run.message && <p className="error" role="alert">{run.message}</p>}
       {run.review && <ReviewPanel review={run.review} />}
       {/* Keyed by run: each dry run needs its own acknowledgement, even when Apply moves

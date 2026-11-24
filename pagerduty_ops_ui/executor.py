@@ -20,7 +20,7 @@ from pathlib import Path
 from . import files as run_files
 from .review import MODE_FLAGS, input_hash, output_hash
 from .runner import OUTCOMES, Result, kill_leftover, run_command
-from .store import RUNNING, RunFile, RunRecord, RunStore, now
+from .store import RUNNING, RunFile, RunRecord, RunStore, cap_override, now
 
 # An apply whose fresh dry run no longer matched the review: nothing was applied (#74).
 CHANGED = "changed"
@@ -247,7 +247,8 @@ class Executor:
             return
         self.store.save(new_run(fresh_id, entry.name, dry_argv, "dry-run",
                                 Requester.of(apply), fresh_inputs,
-                                timeout_seconds=apply.timeout_seconds), fresh_inputs)
+                                timeout_seconds=apply.timeout_seconds,
+                                override=cap_override(apply)), fresh_inputs)
         self.store.update(apply_id, fresh_dry_run_id=fresh_id)
         self._cancel_event(fresh_id, cancel)  # cancelling the check cancels the apply
         try:
@@ -299,9 +300,13 @@ class Requester:
 
 def new_run(run_id: str, command: str, argv: list[str], kind: str, requester: Requester,
             inputs, *, timeout_seconds: int, status: str = RUNNING,
-            applied_from: str | None = None) -> RunRecord:
-    """A Run about to execute (or, for an apply, to queue)."""
+            applied_from: str | None = None, override: dict | None = None) -> RunRecord:
+    """A Run about to execute (or, for an apply, to queue). `override` is its cap override
+    (#75): {reason, by, caps}, or None."""
     return RunRecord(
+        cap_override_reason=override["reason"] if override else None,
+        cap_override_by=override["by"] if override else None,
+        cap_overrides=override["caps"] if override else None,
         id=run_id, command=command, argv=argv, kind=kind, status=status,
         requested_by=requester.email, requester_name=requester.name,
         requester_role=requester.role, queued_at=now(),

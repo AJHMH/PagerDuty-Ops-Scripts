@@ -170,3 +170,38 @@ def test_assessment_reports_how_a_dry_run_is_chosen():
     assert assess(apply_tags, ["tags.csv"]).write_switch == DRY_RUN_FLAG
     assert assess(business_services, ["apply", "-i", "bs.json"]).write_switch == APPLY_FLAG
     assert assess(list_users, []).write_switch is None
+
+
+def test_a_cap_raised_above_its_default_is_reported():
+    # Which flags are caps comes from the risk declaration; their defaults from the parser.
+    from pagerduty_ops.commands.business_services import DEFAULT_MAX_DELETES
+    from pagerduty_ops.risk import RaisedCap
+
+    raised = assess(business_services, ["apply", "-i", "bs.json", "--max-deletes",
+                                        str(DEFAULT_MAX_DELETES + 5)])
+    assert raised.raised_caps == (
+        RaisedCap("--max-deletes", DEFAULT_MAX_DELETES, DEFAULT_MAX_DELETES + 5),)
+
+
+def test_a_cap_at_or_below_its_default_is_not_an_override():
+    from pagerduty_ops.commands.business_services import DEFAULT_MAX_DELETES
+
+    for value in (DEFAULT_MAX_DELETES, 0):
+        verdict = assess(business_services, ["apply", "-i", "bs.json", "--max-deletes",
+                                             str(value)])
+        assert verdict.raised_caps == ()
+    assert assess(business_services, ["apply", "-i", "bs.json"]).raised_caps == ()
+    assert assess(list_users, []).raised_caps == ()
+
+
+def test_raised_caps_cover_each_capped_command():
+    from pagerduty_ops.commands.event_rules_migrate import DEFAULT_MAX_SERVICES
+    from pagerduty_ops.commands.sn_sync import DEFAULT_MAX_WRITES
+
+    caps = assess(event_rules_migrate, ["activate", "--all", "--max-services",
+                                        str(DEFAULT_MAX_SERVICES + 1)]).raised_caps
+    assert [c.flag for c in caps] == ["--max-services"]
+    caps = assess(sn_sync, ["apply", "plan.json", "--instance", "x", "--max-writes",
+                            str(DEFAULT_MAX_WRITES * 2)]).raised_caps
+    assert [(c.flag, c.default, c.value) for c in caps] == [
+        ("--max-writes", DEFAULT_MAX_WRITES, DEFAULT_MAX_WRITES * 2)]

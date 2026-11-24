@@ -109,7 +109,8 @@ def _field(action: argparse.Action, groups: dict[int, int], prog: str) -> dict |
     }
 
 
-def _section(parser: argparse.ArgumentParser) -> tuple[list[dict], argparse._SubParsersAction]:
+def _section(parser: argparse.ArgumentParser, cap_flags=()
+             ) -> tuple[list[dict], argparse._SubParsersAction]:
     groups = {id(a): i for i, g in enumerate(parser._mutually_exclusive_groups)
               for a in g._group_actions}
     fields, subparsers = [], None
@@ -119,6 +120,8 @@ def _section(parser: argparse.ArgumentParser) -> tuple[list[dict], argparse._Sub
             continue
         field = _field(action, groups, parser.prog)
         if field is not None:
+            # A write cap (the engine's risk declaration): raising it needs a reason (#75).
+            field["cap"] = bool(set(field["flags"]) & set(cap_flags))
             fields.append(field)
     return fields, subparsers
 
@@ -127,7 +130,8 @@ def form_for(entry: CommandEntry) -> dict:
     module = importlib.import_module(entry.module)
     parser = getattr(module, entry.builder)()
     declaration = declarations(module)[entry.builder]
-    fields, subparsers = _section(parser)
+    fields, subparsers = _section(
+        parser, declaration.cap_flags if isinstance(declaration, Risk) else ())
     form = {"name": entry.name, "description": parser.description or "",
             "fields": fields, "subcommands": None,
             "writes": declaration.writes if isinstance(declaration, Risk) else None}
@@ -135,7 +139,7 @@ def form_for(entry: CommandEntry) -> dict:
         helps = {a.dest: a.help for a in subparsers._choices_actions}
         form["subcommands"] = []
         for name, sub in subparsers.choices.items():
-            sub_fields, nested = _section(sub)
+            sub_fields, nested = _section(sub, declaration[name].cap_flags)
             if nested is not None:
                 raise UnsupportedArgument(f"{entry.name} {name}: nested subcommands")
             form["subcommands"].append({

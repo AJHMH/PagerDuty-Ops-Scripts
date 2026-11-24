@@ -69,7 +69,8 @@ class Risk:
         from the items, never the Plan's recorded options, which are not hashed.
     irreversible_on_sn_production: an apply to a ServiceNow production instance is
         irreversible.
-    cap_flags: write caps that must not be raised without a recorded override.
+    cap_flags: write caps that must not be raised above their parser default without a
+        recorded override; ``assess()`` reports which ones an argv raises.
     timeout_minutes: Run timeout when the 2-hour default is not enough.
     """
 
@@ -122,6 +123,15 @@ def declarations(module: ModuleType) -> dict[str, Risk | dict[str, Risk]]:
 
 
 @dataclass(frozen=True)
+class RaisedCap:
+    """A write cap set above the command's own default: a front end must record why (#75)."""
+
+    flag: str
+    default: int | float
+    value: int | float
+
+
+@dataclass(frozen=True)
 class Assessment:
     """The verdict for one Run of a command with a concrete argv."""
 
@@ -132,6 +142,7 @@ class Assessment:
     cap_flags: tuple[str, ...]
     timeout_minutes: int | None
     write_switch: str | None = None  # DRY_RUN_FLAG or APPLY_FLAG for commands that write
+    raised_caps: tuple[RaisedCap, ...] = ()  # caps this argv sets above their defaults
 
 
 def _subcommand(parser: argparse.ArgumentParser, args: argparse.Namespace) -> str | None:
@@ -200,7 +211,23 @@ def assess(module: ModuleType, argv: list[str], builder: str = "build_parser", *
     if risk.irreversible_on_sn_production:
         reasons += _sn_production_reasons(getattr(args, "instance", None))
     return Assessment(True, dry_run, bool(reasons), tuple(reasons), risk.cap_flags,
-                      risk.timeout_minutes, risk.write_switch)
+                      risk.timeout_minutes, risk.write_switch,
+                      _raised_caps(parser, args, risk.cap_flags))
+
+
+def _raised_caps(parser, args, cap_flags) -> tuple[RaisedCap, ...]:
+    """The declared caps this argv sets above the parser's default (lowering one is fine)."""
+    raised = []
+    for flag in cap_flags:
+        for action in _all_actions(parser, args):
+            if flag not in action.option_strings:
+                continue
+            value = getattr(args, action.dest, None)
+            if (isinstance(value, (int, float)) and isinstance(action.default, (int, float))
+                    and value > action.default):
+                raised.append(RaisedCap(flag, action.default, value))
+            break
+    return tuple(raised)
 
 
 def _resolve_path(path: str | None, cwd: str | None) -> str | None:
