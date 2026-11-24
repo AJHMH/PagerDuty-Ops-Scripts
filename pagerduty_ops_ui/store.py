@@ -20,6 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, load_only, mapped_column
 
+from .approvals import APPROVAL_COLUMNS, AWAITING, approval_dict
 from .migrate import check_schema
 from .overrides import MAX_REASON_LENGTH, CapOverride
 from .review import review
@@ -81,6 +82,16 @@ class RunRecord(Base):
     cap_override_reason: Mapped[str | None] = mapped_column(Unicode(MAX_REASON_LENGTH))
     cap_override_by: Mapped[str | None] = mapped_column(Unicode(320))
     cap_overrides: Mapped[list | None] = mapped_column(JSON)
+    # An Approval (#77) of a dry run of an Irreversible operation: its status, the engine's
+    # reasons, when it was asked for and when it expires, and the Approver's decision. An
+    # apply carries its dry run's, so the approver is recorded on it too.
+    approval_status: Mapped[str | None] = mapped_column(Unicode(20))
+    approval_reasons: Mapped[list | None] = mapped_column(JSON)
+    approval_requested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_decided_by: Mapped[str | None] = mapped_column(Unicode(320))
+    approval_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    approval_comment: Mapped[str | None] = mapped_column(Unicode(MAX_REASON_LENGTH))
     # An apply records the reviewed dry run it came from, and the fresh dry run that was
     # compared with it inside the writing slot (ADR 0011).
     applied_from: Mapped[str | None] = mapped_column(Unicode(36))
@@ -131,6 +142,7 @@ SUMMARY_COLUMNS = (
     RunRecord.requester_role, RunRecord.queued_at, RunRecord.started_at,
     RunRecord.finished_at, RunRecord.applied_from, RunRecord.cap_override_reason,
     RunRecord.cap_override_by, RunRecord.cap_overrides,
+    *(getattr(RunRecord, column) for column in APPROVAL_COLUMNS),
 )
 
 
@@ -140,7 +152,7 @@ def cap_override(run: RunRecord) -> dict | None:
     return override.as_dict() if override else None
 
 
-def summary_dict(run: RunRecord) -> dict:
+def summary_dict(run: RunRecord, now: datetime | None = None) -> dict:
     """A Run as a row of the history (#69): what it was and how it ended, without its
     output, log or files."""
     return {
@@ -150,13 +162,14 @@ def summary_dict(run: RunRecord) -> dict:
         "requester_role": run.requester_role, "queued_at": _iso(run.queued_at),
         "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
         "applied_from": run.applied_from, "cap_override": cap_override(run),
+        "approval": approval_dict(run, now or datetime.now(timezone.utc), _iso),
     }
 
 
-def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
+def to_dict(run: RunRecord, files: list[RunFile], now: datetime | None = None) -> dict:
     """The whole Run, as its page shows it."""
     return {
-        **summary_dict(run),
+        **summary_dict(run, now),
         "cancelled_by": run.cancelled_by, "fresh_dry_run_id": run.fresh_dry_run_id,
         "exit_code": run.exit_code, "stdout": run.stdout, "stderr": run.stderr,
         "message": _message(run), "input_hash": run.input_hash,
@@ -169,7 +182,8 @@ def to_dict(run: RunRecord, files: list[RunFile]) -> dict:
 
 
 class RunStore:
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, clock=None):
+        self.clock = clock or (lambda: datetime.now(timezone.utc))  # for Approval expiry
         self.engine = create_engine(database_url)
         # The schema comes from migrations, applied by pd-ui-migrate (#70); the service
         # only checks it, so its own account needs no rights to change the schema.
@@ -192,7 +206,7 @@ class RunStore:
                 return None
             files = session.scalars(select(RunFile).where(RunFile.run_id == run_id)
                                     .order_by(RunFile.id)).all()
-            return to_dict(run, list(files))
+            return to_dict(run, list(files), self.clock())
 
     def mark_reviewed(self, run_id: str, email: str) -> None:
         self.update(run_id, reviewed_by=email, reviewed_at=now())
@@ -299,8 +313,9 @@ class RunStore:
                 RunRecord.kind == "apply", RunRecord.status == RUNNING))
             pending = session.scalars(summaries.where(RunRecord.status == QUEUED)
                                       .order_by(RunRecord.queued_at, RunRecord.id)).all()
-            return {"executing": summary_dict(executing) if executing else None,
-                    "pending": [summary_dict(r) for r in pending]}
+            now = self.clock()
+            return {"executing": summary_dict(executing, now) if executing else None,
+                    "pending": [summary_dict(r, now) for r in pending]}
 
     def stop_interrupted(self) -> list[int]:
         """At startup: whatever was executing when the service stopped was cut off. Returns
@@ -350,8 +365,20 @@ class RunStore:
                 select(RunRecord).options(load_only(*SUMMARY_COLUMNS)).where(*conditions)
                 .order_by(RunRecord.queued_at.desc(), RunRecord.id.desc())
                 .offset((page - 1) * per_page).limit(per_page)).all()
-            return {"runs": [summary_dict(r) for r in runs], "total": total, "page": page,
+            now = self.clock()
+            return {"runs": [summary_dict(r, now) for r in runs], "total": total, "page": page,
                     "per_page": per_page}
+
+    def awaiting_approval(self) -> list[dict]:
+        """Requests waiting for an Approver (not yet expired), oldest first (#77)."""
+        now = self.clock()
+        with Session(self.engine) as session:
+            rows = session.scalars(
+                select(RunRecord).options(load_only(*SUMMARY_COLUMNS))
+                .where(RunRecord.approval_status == AWAITING,
+                       RunRecord.approval_expires_at > now)
+                .order_by(RunRecord.approval_requested_at, RunRecord.id)).all()
+            return [summary_dict(r, now) for r in rows]
 
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:

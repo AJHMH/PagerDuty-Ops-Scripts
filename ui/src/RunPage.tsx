@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { applyRun, cancelRun, fileUrl, freshDryRun, getRun, reviewRun, type Me,
-  type Outcome, type Review, type Run } from "./api";
+import { ApiError, applyRun, askForApproval, cancelRun, decideApproval, fileUrl, freshDryRun,
+  getRun, reviewRun, type Me, type Outcome, type Review, type Run } from "./api";
 
 const POLL_MS = 1000;
 
@@ -120,11 +120,66 @@ function RunControls({ run, me, onChange }: { run: Run; me: Me; onChange: (run: 
   );
 }
 
+const APPROVAL_LABELS = {
+  "awaiting-approval": "Waiting for an Approver",
+  "approved": "Approved",
+  "rejected": "Rejected",
+  "expired": "Expired",
+} as const;
+
+// An Irreversible operation's Approval (#77): what the engine found irreversible, and the
+// Approver's decision. Approvers other than the requester decide here, with a comment, after
+// reading the diff, inputs, requester and any cap override shown on this page.
+function ApprovalPanel({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
+  const { busy, error, act } = useStep(run, onChange);
+  const [comment, setComment] = useState("");
+  const approval = run.approval;
+  if (!approval || run.kind !== "dry-run") return null;
+  const canDecide = approval.status === "awaiting-approval" && me.role === "approver"
+    && run.requested_by !== me.email;
+  return (
+    <section aria-label="Approval" className="steps approval">
+      <h2>Approval: {APPROVAL_LABELS[approval.status]}</h2>
+      <p>Applying this is an <strong>Irreversible operation</strong>:{" "}
+        {approval.reasons.join("; ")}. It needs a second admin's Approval.</p>
+      <dl>
+        <dt>Asked</dt><dd>{new Date(approval.requested_at).toLocaleString()}</dd>
+        {approval.decided_by && <><dt>{approval.status === "rejected" ? "Rejected" : "Decided"} by</dt>
+          <dd>{approval.decided_by}</dd></>}
+        {approval.comment && <><dt>Comment</dt><dd>“{approval.comment}”</dd></>}
+        {(approval.status === "awaiting-approval" || approval.status === "approved") && (
+          <><dt>Expires</dt><dd>{new Date(approval.expires_at).toLocaleString()}</dd></>)}
+      </dl>
+      {canDecide && (
+        <>
+          <label>Comment (required)
+            <textarea required maxLength={500} rows={2} value={comment}
+                      onChange={(e) => setComment(e.target.value)} />
+          </label>
+          <button type="button" disabled={busy || !comment.trim()}
+                  onClick={() => act(() => decideApproval(run.id, "approve", comment))}>
+            Approve
+          </button>{" "}
+          <button type="button" className="danger" disabled={busy || !comment.trim()}
+                  onClick={() => act(() => decideApproval(run.id, "reject", comment))}>
+            Reject
+          </button>
+        </>
+      )}
+      {approval.status === "awaiting-approval" && run.requested_by === me.email && (
+        <p className="hint">An Approver other than you must approve it.</p>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
 // Review, then Apply (#73): only for the admin who ran a dry run that succeeded. The service
 // enforces every gate; this only decides which step to offer.
 function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
   const { busy, error, act } = useStep(run, onChange);
   const [understood, setUnderstood] = useState(false);
+  const [needsApproval, setNeedsApproval] = useState(false);
   const mine = run.requested_by === me.email && me.role !== "viewer";
   if (run.kind !== "dry-run" || !mine || run.outcome !== "succeeded" || !run.review?.complete) {
     return null;
@@ -152,12 +207,31 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
             I understand this will change live data.
           </label>
           <button type="button" className="danger" disabled={busy || !understood}
-                  onClick={() => act(() => applyRun(run.id))}>
+                  onClick={() => act(async () => {
+                    try {
+                      return await applyRun(run.id);
+                    } catch (e) {
+                      // Irreversible: the service says an Approval is needed first (#77).
+                      setNeedsApproval(e instanceof ApiError && e.status === 403
+                        && /Approval/.test(e.message));
+                      throw e;
+                    }
+                  })}>
             {busy ? "Sending…" : "Apply these changes"}
           </button>
         </>
       )}
       {error && <p className="error" role="alert">{error}</p>}
+      {needsApproval && (!run.approval || run.approval.status === "expired") && (
+        <button type="button" disabled={busy}
+                onClick={() => act(async () => {
+                  const asked = await askForApproval(run.id);
+                  setNeedsApproval(false);
+                  return asked;
+                })}>
+          Ask an Approver for an Approval
+        </button>
+      )}
     </section>
   );
 }
@@ -232,6 +306,9 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
       {run.kind === "dry-run" && (
         <p className="notice"><strong>Dry run</strong>: nothing is changed.</p>
       )}
+      {run.kind === "apply" && run.approval?.decided_by && (
+        <p className="notice">Approved by {run.approval.decided_by}: “{run.approval.comment}”</p>
+      )}
       {run.kind === "apply" && run.applied_from && (
         <p className="notice"><strong>Apply</strong> of the reviewed{" "}
           <a href={runLink(run.applied_from)}>dry run</a>
@@ -247,6 +324,7 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
       {run.review && <ReviewPanel review={run.review} />}
       {/* Keyed by run: each dry run needs its own acknowledgement, even when Apply moves
           to a fresh dry run and React would otherwise reuse this component's state. */}
+      <ApprovalPanel key={`approval-${run.id}`} run={run} me={me} onChange={setRun} />
       <ApplySteps key={run.id} run={run} me={me} onChange={setRun} />
       <RunControls key={`controls-${run.id}`} run={run} me={me} onChange={setRun} />
       <dl>

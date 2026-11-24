@@ -15,9 +15,11 @@ import shutil
 import threading
 import uuid
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import Path
 
 from . import files as run_files
+from .approvals import require_approved
 from .overrides import CapOverride, check_reviewed
 from .review import MODE_FLAGS, input_hash, output_hash
 from .runner import OUTCOMES, Result, kill_leftover, run_command
@@ -39,7 +41,8 @@ class InputChanged(Exception):
 
 
 class Executor:
-    def __init__(self, store: RunStore, settings, catalog):
+    def __init__(self, store: RunStore, settings, catalog, clock=None):
+        self.clock = clock or (lambda: datetime.now(timezone.utc))
         self.store = store
         self.settings = settings
         self.catalog = catalog
@@ -236,6 +239,7 @@ class Executor:
         dry_argv, _, verdict = gate_apply(entry, neutral, dry_dir,
                                           self.settings.secret_env.values())
         check_reviewed(verdict, CapOverride.of(apply))  # cap defaults can change meanwhile
+        require_approved(verdict, apply, self.clock())  # an Approval can expire in the queue
 
         fresh_id = str(uuid.uuid4())
         try:

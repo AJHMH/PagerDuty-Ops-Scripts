@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
+import { ApprovalsPanel } from "./ApprovalsPanel";
 import { HistoryPage } from "./HistoryPage";
 import { QueuePanel } from "./QueuePanel";
 import { RunForm } from "./RunForm";
@@ -55,7 +56,7 @@ export function App() {
       </header>
       <main>{runMatch ? <RunPage id={decodeURIComponent(runMatch[1])} me={session.me} />
         : route.startsWith("/history") ? <HistoryPage hash={route} />
-        : <><RunForm role={session.me.role} /><QueuePanel /></>}</main>
+        : <><RunForm role={session.me.role} /><QueuePanel /><ApprovalsPanel /></>}</main>
     </>
   );
 }

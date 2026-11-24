@@ -6,6 +6,7 @@ import os
 import shutil
 import time
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -53,6 +54,10 @@ def catalog():
                                              "build_parser")
     entries["ui-writer"] = CommandEntry("ui-writer", "fixture_writer", "main", "build_parser")
     entries["ui-differ"] = CommandEntry("ui-differ", "fixture_differ", "main", "build_parser")
+    # Real engine parsers and risk declarations with harmless mains (#77).
+    for name, module in (("ui-reorg", "reorg"), ("ui-business-services", "business_services"),
+                         ("ui-scim", "scim_user_sync")):
+        entries[name] = CommandEntry(name, f"fixture_real_{module}", "main", "build_parser")
     return entries
 
 
@@ -160,10 +165,28 @@ def settings(tmp_path, database_url):
     )
 
 
+class FakeClock:
+    """The service's clock in tests: real time, plus however far a test moves it on."""
+
+    def __init__(self):
+        self.offset = timedelta(0)
+
+    def __call__(self) -> datetime:
+        return datetime.now(timezone.utc) + self.offset
+
+    def advance(self, **kwargs) -> None:
+        self.offset += timedelta(**kwargs)
+
+
 @pytest.fixture
-def client(settings, catalog, monkeypatch):
+def clock():
+    return FakeClock()
+
+
+@pytest.fixture
+def client(settings, catalog, clock, monkeypatch):
     monkeypatch.syspath_prepend(str(HERE))  # so assess() can import the fixture module too
-    app = create_app(settings, identity=HeaderIdentity(), catalog=catalog)
+    app = create_app(settings, identity=HeaderIdentity(), catalog=catalog, clock=clock)
     # The front end sends this on every request; see test_csrf in test_apply.py.
     with TestClient(app, headers={"X-PD-Ops-Request": "1"}) as c:
         yield c

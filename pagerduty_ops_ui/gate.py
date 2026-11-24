@@ -136,8 +136,7 @@ def gate_apply(entry: CommandEntry, neutral_argv: list[str], cwd: Path,
                secrets) -> tuple[list[str], list[str], Assessment]:
     """For applying a reviewed dry run: the argv of the fresh dry run, the argv of the apply,
     and the engine's verdict on the apply. -y is added here, after every check (ADR 0003).
-
-    Refuses (403) an Irreversible operation: those need a second admin's Approval (#77).
+    Whether the apply is irreversible, and so needs an Approval (#77), is `verdict.irreversible`.
     """
     module = check_arguments(entry, neutral_argv, secrets)
     verdict = assess_run(module, entry, neutral_argv, cwd)
@@ -151,8 +150,4 @@ def gate_apply(entry: CommandEntry, neutral_argv: list[str], cwd: Path,
     verdict = assess_run(module, entry, apply_argv, cwd)
     if not verdict.writes or verdict.dry_run:
         raise HTTPException(409, "The engine doesn't recognise this as an apply.")
-    if verdict.irreversible:
-        raise HTTPException(403, "This is an Irreversible operation ("
-                                 + "; ".join(verdict.reasons) + "). It needs a second "
-                                 "admin's Approval, which arrives in Phase 3.")
     return dry_argv, apply_argv, verdict

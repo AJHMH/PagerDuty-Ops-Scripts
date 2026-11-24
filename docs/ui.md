@@ -105,7 +105,7 @@ A command's write caps (`--max-deletes`, `--max-writes`, `--max-services`) are n
 1. **Run and review.** The admin who ran a dry run that succeeded and completed records that they reviewed it: `POST /api/runs/{id}/review`. Only that admin can review it, and only Operators and Approvers can review at all.
 2. **Apply.** That admin applies it with `POST /api/runs/{id}/apply`. The apply takes no new inputs: it reuses the dry run's command, arguments and uploaded files.
    - **Inputs:** each uploaded file is re-verified against its recorded hash. A changed file refuses the apply (409).
-   - **Irreversible operations:** checked with the engine's `assess()`, and refused (403) until Approvals arrive in Phase 3 (#77).
+   - **Irreversible operations:** judged by the engine's `assess()`; applying one needs a valid Approval (see Approvals below), or it is refused (403).
    - **The queue:** the apply is stored with `kind: "apply"`, `applied_from` and `status: "queued"`, and returned at once (201). It waits for the one writing slot (below).
    - **Fresh dry run:** in its turn, inside the slot, a fresh dry run of the same inputs runs and is stored; the apply records it as `fresh_dry_run_id`. If it doesn't succeed, nothing is applied (`failed`). If its `output_hash` differs from the reviewed one, nothing is applied either: the outcome is `changed`, and that new dry run must be reviewed instead. Either way the reviewed dry run can be applied again.
    - **The command line:** only then is the apply run, with the mode-neutral argv plus `-y`, or `--apply -y` for diff-first commands. `-y` is added only after every gate has passed.
@@ -123,6 +123,18 @@ A command's write caps (`--max-deletes`, `--max-writes`, `--max-services`) are n
 - `page` (from 1) and `per_page` (1–200, default 50).
 
 `outcome=unfinished` finds Runs still queued or running. An unknown outcome or kind, a date without a timezone, `page` below 1 or `per_page` outside 1–200 is refused (422); a page past the last one returns no rows, and the History page then offers a link back to the newest Runs. The History page keeps its filters in the URL (`#/history?…`), so a search can be shared; its From and To dates are whole days in the browser's time zone, which the page names, and To includes its day. A malformed date in a shared link is ignored, with a note. Migration `0002` indexes Runs by when they were requested.
+
+## Approvals (#77, ADRs 0003, 0010 and 0011)
+
+Applying an Irreversible operation needs a second admin's Approval. Whether an apply is irreversible comes only from the engine's `assess()`, judged on the apply's command line in the dry run's own directory, so a relative Plan path resolves; when it can't tell (an unreadable Plan, an unknown ServiceNow instance), it fails closed. A team reorg, even a pruning one, and a single-object delete are not irreversible.
+
+1. **Ask.** The requester of a reviewed dry run asks: `POST /api/runs/{id}/approval`. The dry run's `approval` becomes `awaiting-approval`, with the engine's `reasons`. A dry run that doesn't need one gets 409. The request expires if nobody answers within 24 hours; the requester can then ask again.
+2. **Decide.** An Approver other than the requester approves or rejects, with a comment: `POST /api/runs/{id}/approval/approve` or `.../reject` with `{comment}` (non-blank, at most 500 characters, no secret values). Viewers, Operators and the requester get 403. The Run page shows the Approver the exact diff, the inputs, the requester, the reasons and any cap override.
+3. **Apply.** The apply is refused (403) unless the Approval is `approved` and less than 24 hours old, and it is checked again when the apply reaches the writing slot, so an Approval that expires while queued isn't used. The apply records the approver (`approval.decided_by`) and comment.
+
+A rejection is final for that dry run: the requester runs a new dry run and asks again. If the fresh dry run at apply time differs from the approved one, nothing is applied (`changed`); the fresh dry run is a new dry run, so it needs its own review and Approval.
+
+`GET /api/approvals` lists requests waiting for an Approver, oldest first; the home page shows them as "Waiting for approval". The Ledger (#76) isn't built yet; when it is, it takes the approver from the Run. Teams notifications for requests are #78.
 
 ## One writing Run at a time (#74, ADR 0012)
 
@@ -219,4 +231,4 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 These are later tickets:
 - the Windows host packaging (#71);
 - the rest of Phase 2: the Ledger and 90-day purge (#76);
-- Phase 3: Approvals (#77) and what follows them.
+- the rest of Phase 3: Teams notifications for Approval requests (#78), ServiceNow production applies with shared receipts (#79), and scheduled read-only Runs (#80).
