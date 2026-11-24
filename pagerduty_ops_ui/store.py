@@ -20,7 +20,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, load_only, mapped_column
 
-from .approvals import APPROVAL_COLUMNS, AWAITING, approval_dict
+from .approvals import APPROVAL_LIFETIME, APPROVED, AWAITING, WITHDRAWN, Approval
 from .migrate import check_schema
 from .overrides import MAX_REASON_LENGTH, CapOverride
 from .review import review
@@ -30,8 +30,11 @@ RUN_KINDS = ("report", "dry-run", "apply")
 UNFINISHED = "unfinished"  # history filter: Runs still queued or running (no outcome yet)
 
 
-def now() -> datetime:
+def utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+now = utc_now  # the time stamped on Runs (queued, started, finished, reviewed)
 
 
 class Base(DeclarativeBase):
@@ -142,7 +145,9 @@ SUMMARY_COLUMNS = (
     RunRecord.requester_role, RunRecord.queued_at, RunRecord.started_at,
     RunRecord.finished_at, RunRecord.applied_from, RunRecord.cap_override_reason,
     RunRecord.cap_override_by, RunRecord.cap_overrides,
-    *(getattr(RunRecord, column) for column in APPROVAL_COLUMNS),
+    RunRecord.approval_status, RunRecord.approval_reasons, RunRecord.approval_requested_at,
+    RunRecord.approval_expires_at, RunRecord.approval_decided_by,
+    RunRecord.approval_decided_at, RunRecord.approval_comment,
 )
 
 
@@ -150,6 +155,11 @@ def cap_override(run: RunRecord) -> dict | None:
     """A Run's cap override (#75) as the API shows it, or None if it raised no cap."""
     override = CapOverride.of(run)
     return override.as_dict() if override else None
+
+
+def approval_view(run: RunRecord, now: datetime) -> dict | None:
+    approval = Approval.of(run)
+    return approval.as_dict(now, _iso, carried=run.kind == "apply") if approval else None
 
 
 def summary_dict(run: RunRecord, now: datetime | None = None) -> dict:
@@ -162,7 +172,7 @@ def summary_dict(run: RunRecord, now: datetime | None = None) -> dict:
         "requester_role": run.requester_role, "queued_at": _iso(run.queued_at),
         "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
         "applied_from": run.applied_from, "cap_override": cap_override(run),
-        "approval": approval_dict(run, now or datetime.now(timezone.utc), _iso),
+        "approval": approval_view(run, now or utc_now()),
     }
 
 
@@ -183,7 +193,7 @@ def to_dict(run: RunRecord, files: list[RunFile], now: datetime | None = None) -
 
 class RunStore:
     def __init__(self, database_url: str, clock=None):
-        self.clock = clock or (lambda: datetime.now(timezone.utc))  # for Approval expiry
+        self.clock = clock or utc_now  # judges Approval expiry (tests move it on)
         self.engine = create_engine(database_url)
         # The schema comes from migrations, applied by pd-ui-migrate (#70); the service
         # only checks it, so its own account needs no rights to change the schema.
@@ -369,9 +379,36 @@ class RunStore:
             return {"runs": [summary_dict(r, now) for r in runs], "total": total, "page": page,
                     "per_page": per_page}
 
+    def decide_approval(self, run_id: str, decision: str, by: str, comment: str) -> bool:
+        """Record an Approver's decision, atomically: only while the dry run's request is
+        open (waiting, unexpired, not applied), so of two racing decisions, or a decision
+        racing the expiry, at most one counts. False if it wasn't open."""
+        now = self.clock()
+        values = {"approval_status": decision, "approval_decided_by": by,
+                  "approval_decided_at": now, "approval_comment": comment}
+        if decision == APPROVED:
+            values["approval_expires_at"] = now + APPROVAL_LIFETIME
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(
+                update(RunRecord)
+                .where(RunRecord.id == run_id, RunRecord.kind == "dry-run",
+                       RunRecord.applied_run_id.is_(None),
+                       RunRecord.approval_status == AWAITING,
+                       RunRecord.approval_expires_at > now.astimezone(timezone.utc))
+                .values(**values))
+            return result.rowcount == 1
+
+    def withdraw_approval(self, run_id: str) -> None:
+        """A mismatch at apply time withdraws the dry run's Approval (ADR 0011)."""
+        with Session(self.engine) as session, session.begin():
+            session.execute(update(RunRecord)
+                            .where(RunRecord.id == run_id,
+                                   RunRecord.approval_status == APPROVED)
+                            .values(approval_status=WITHDRAWN))
+
     def awaiting_approval(self) -> list[dict]:
         """Requests waiting for an Approver (not yet expired), oldest first (#77)."""
-        now = self.clock()
+        now = self.clock().astimezone(timezone.utc)  # stored times are UTC
         with Session(self.engine) as session:
             rows = session.scalars(
                 select(RunRecord).options(load_only(*SUMMARY_COLUMNS))

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { ApiError, applyRun, askForApproval, cancelRun, decideApproval, fileUrl, freshDryRun,
+import { applyRun, askForApproval, cancelRun, decideApproval, fileUrl, freshDryRun,
   getRun, reviewRun, type Me, type Outcome, type Review, type Run } from "./api";
 
 const POLL_MS = 1000;
@@ -125,6 +125,8 @@ const APPROVAL_LABELS = {
   "approved": "Approved",
   "rejected": "Rejected",
   "expired": "Expired",
+  "withdrawn": "Withdrawn: what it would change has changed",
+  "used": "Used",
 } as const;
 
 // An Irreversible operation's Approval (#77): what the engine found irreversible, and the
@@ -135,19 +137,27 @@ function ApprovalPanel({ run, me, onChange }: { run: Run; me: Me; onChange: (run
   const [comment, setComment] = useState("");
   const approval = run.approval;
   if (!approval || run.kind !== "dry-run") return null;
-  const canDecide = approval.status === "awaiting-approval" && me.role === "approver"
-    && run.requested_by !== me.email;
+  const mine = run.requested_by === me.email;
+  const canDecide = approval.status === "awaiting-approval" && me.role === "approver" && !mine;
+  // The requester asks once the review shows it's needed, and again after a request or an
+  // Approval expired. A rejected or withdrawn one is final: dry-run again.
+  const canAsk = mine && me.role !== "viewer" && !run.applied_run_id && !!run.reviewed_by
+    && (approval.status === null
+      || (approval.status === "expired"));
   return (
     <section aria-label="Approval" className="steps approval">
-      <h2>Approval: {APPROVAL_LABELS[approval.status]}</h2>
+      <h2>{approval.status === null ? "Applying this needs an Approval"
+        : `Approval: ${APPROVAL_LABELS[approval.status]}`}</h2>
       <p>Applying this is an <strong>Irreversible operation</strong>:{" "}
         {approval.reasons.join("; ")}. It needs a second admin's Approval.</p>
       <dl>
-        <dt>Asked</dt><dd>{new Date(approval.requested_at).toLocaleString()}</dd>
+        {approval.requested_at && <><dt>Asked</dt>
+          <dd>{new Date(approval.requested_at).toLocaleString()}</dd></>}
         {approval.decided_by && <><dt>{approval.status === "rejected" ? "Rejected" : "Decided"} by</dt>
           <dd>{approval.decided_by}</dd></>}
         {approval.comment && <><dt>Comment</dt><dd>“{approval.comment}”</dd></>}
-        {(approval.status === "awaiting-approval" || approval.status === "approved") && (
+        {(approval.status === "awaiting-approval" || approval.status === "approved")
+          && approval.expires_at && (
           <><dt>Expires</dt><dd>{new Date(approval.expires_at).toLocaleString()}</dd></>)}
       </dl>
       {canDecide && (
@@ -166,7 +176,12 @@ function ApprovalPanel({ run, me, onChange }: { run: Run; me: Me; onChange: (run
           </button>
         </>
       )}
-      {approval.status === "awaiting-approval" && run.requested_by === me.email && (
+      {canAsk && (
+        <button type="button" disabled={busy} onClick={() => act(() => askForApproval(run.id))}>
+          Ask an Approver for an Approval
+        </button>
+      )}
+      {approval.status === "awaiting-approval" && mine && (
         <p className="hint">An Approver other than you must approve it.</p>
       )}
       {error && <p className="error" role="alert">{error}</p>}
@@ -179,7 +194,6 @@ function ApprovalPanel({ run, me, onChange }: { run: Run; me: Me; onChange: (run
 function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
   const { busy, error, act } = useStep(run, onChange);
   const [understood, setUnderstood] = useState(false);
-  const [needsApproval, setNeedsApproval] = useState(false);
   const mine = run.requested_by === me.email && me.role !== "viewer";
   if (run.kind !== "dry-run" || !mine || run.outcome !== "succeeded" || !run.review?.complete) {
     return null;
@@ -207,31 +221,13 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
             I understand this will change live data.
           </label>
           <button type="button" className="danger" disabled={busy || !understood}
-                  onClick={() => act(async () => {
-                    try {
-                      return await applyRun(run.id);
-                    } catch (e) {
-                      // Irreversible: the service says an Approval is needed first (#77).
-                      setNeedsApproval(e instanceof ApiError && e.status === 403
-                        && /Approval/.test(e.message));
-                      throw e;
-                    }
-                  })}>
+                  onClick={() => act(() => applyRun(run.id))}>
             {busy ? "Sending…" : "Apply these changes"}
           </button>
         </>
       )}
       {error && <p className="error" role="alert">{error}</p>}
-      {needsApproval && (!run.approval || run.approval.status === "expired") && (
-        <button type="button" disabled={busy}
-                onClick={() => act(async () => {
-                  const asked = await askForApproval(run.id);
-                  setNeedsApproval(false);
-                  return asked;
-                })}>
-          Ask an Approver for an Approval
-        </button>
-      )}
+
     </section>
   );
 }

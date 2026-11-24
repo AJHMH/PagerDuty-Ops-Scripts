@@ -111,10 +111,14 @@ export interface CapOverride {
 // An Approval of a dry run of an Irreversible operation (#77). It expires 24 hours after it
 // is asked for (if nobody answers) or given; a rejection is final for that dry run.
 export interface Approval {
-  status: "awaiting-approval" | "approved" | "rejected" | "expired";
+  // null: applying needs an Approval (the review found it irreversible), not asked for yet.
+  // "used": an apply carries the Approval it was made with. "withdrawn": a mismatch at apply
+  // time withdrew it.
+  status: null | "awaiting-approval" | "approved" | "rejected" | "expired" | "withdrawn"
+    | "used";
   reasons: string[];  // why the engine counts the apply as irreversible
-  requested_at: string;
-  expires_at: string;
+  requested_at: string | null;
+  expires_at: string | null;
   decided_by: string | null;
   decided_at: string | null;
   comment: string | null;

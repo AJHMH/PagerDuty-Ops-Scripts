@@ -19,11 +19,11 @@ from .approvals import (
     APPROVAL_LIFETIME,
     APPROVED,
     AWAITING,
+    FINAL,
     REJECTED,
-    copied,
+    Approval,
     require_approved,
 )
-from .approvals import status as approval_status
 from .catalog import describe, engine_catalog
 from .executor import (
     FINAL_OUTCOMES,
@@ -55,6 +55,7 @@ from .store import (
     RunFile,
     RunRecord,
     RunStore,
+    utc_now,
 )
 
 # Every state-changing API request must carry this header. A browser can't add a custom
@@ -142,7 +143,7 @@ async def read_run_request(request: Request, max_upload_bytes: int, max_request_
 def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                catalog=None, clock=None) -> FastAPI:
     """`clock` (UTC now) times Approvals; tests move it on to check expiry (#77)."""
-    clock = clock or (lambda: datetime.now(timezone.utc))
+    clock = clock or utc_now
     catalog = engine_catalog() if catalog is None else catalog
     store = RunStore(settings.database_url, clock=clock)
     executor = Executor(store, settings, catalog, clock=clock)
@@ -272,8 +273,22 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         if run["outcome"] != "succeeded":
             raise HTTPException(409, "Only a dry run that succeeded can be reviewed: its "
                                      "changes weren't fully determined.")
+        _, _, verdict = judge_apply(run)
         store.mark_reviewed(run_id, admin.email)
+        if verdict.irreversible and run["approval"] is None:
+            # Say up front that applying it needs an Approval, and why (#77).
+            store.update(run_id, approval_reasons=list(verdict.reasons))
         return store.get(run_id)
+
+    def judge_apply(dry: dict):
+        """The engine's verdict on applying a dry run: same command, arguments and inputs,
+        judged in its own directory so a relative Plan path resolves (ADR 0010)."""
+        entry = catalog.get(dry["command"])
+        if entry is None:
+            raise HTTPException(404, f"Unknown command {dry['command']!r}.")
+        neutral = [a for a in dry["argv"] if a not in MODE_FLAGS]
+        return entry, neutral, gate_apply(entry, neutral, settings.run_root / dry["id"],
+                                          settings.secret_env.values())[2]
 
     def copied_inputs(source_id: str, target_id: str) -> list[RunFile]:
         try:
@@ -306,7 +321,8 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             # record rather than trusting the dry run, which an older version may have made.
             dry_record = store.record(run_id)
             check_reviewed(verdict, CapOverride.of(dry_record))
-            require_approved(verdict, dry_record, clock())  # Irreversible: a valid Approval
+            approval = Approval.of(dry_record)
+            require_approved(verdict, approval, clock())  # Irreversible: a valid Approval
             inputs = copied_inputs(run_id, apply_id)
             record = new_run(
                 apply_id, entry.name, apply_argv, "apply",
@@ -314,7 +330,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                 timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id,
                 override=CapOverride.of(dry_record))
             if verdict.irreversible:  # the approver is recorded on the apply too
-                for column, value in copied(dry_record).items():
+                for column, value in approval.columns().items():
                     setattr(record, column, value)
             queued = store.save(record, inputs)
         except BaseException:
@@ -329,8 +345,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
     @app.post("/api/runs/{run_id}/approval")
     def ask_for_approval(run_id: str, who: SignedIn):
         """The requester asks for an Approval on their reviewed dry run of an Irreversible
-        operation. Whether it is irreversible is the engine's call, judged in the Run's own
-        directory so a relative Plan path resolves; when unsure, it fails closed."""
+        operation. Whether it is irreversible is the engine's call (fails closed)."""
         admin, role = who
         dry = own_dry_run(run_id, admin, role, "ask for an Approval of")
         if dry["reviewed_by"] != admin.email:
@@ -341,30 +356,23 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         current = dry["approval"]["status"] if dry["approval"] else None
         if current in (AWAITING, APPROVED):
             raise HTTPException(409, f"This dry run is already {current}.")
-        if current == REJECTED:
-            raise HTTPException(409, "This dry run's Approval was rejected; run a new dry "
+        if current in FINAL:
+            raise HTTPException(409, f"This dry run's Approval was {current}; run a new dry "
                                      "run and ask again.")
-        entry = catalog.get(dry["command"])
-        if entry is None:
-            raise HTTPException(404, f"Unknown command {dry['command']!r}.")
         try:
             verify_inputs(settings.run_root / run_id, store.files(run_id, "input"))
         except InputChanged as e:
             raise HTTPException(409, f"{e} Run a new dry run.") from None
-        neutral = [a for a in dry["argv"] if a not in MODE_FLAGS]
-        _, _, verdict = gate_apply(entry, neutral, settings.run_root / run_id,
-                                   settings.secret_env.values())
+        _, _, verdict = judge_apply(dry)
         if not verdict.irreversible:
             raise HTTPException(409, "Applying this doesn't need an Approval: the engine "
                                      "doesn't count it as an Irreversible operation.")
         now = clock()
-        store.update(run_id, approval_status=AWAITING, approval_reasons=list(verdict.reasons),
-                     approval_requested_at=now, approval_expires_at=now + APPROVAL_LIFETIME,
-                     approval_decided_by=None, approval_decided_at=None,
-                     approval_comment=None)
+        store.update(run_id, **Approval(AWAITING, tuple(verdict.reasons), now,
+                                        now + APPROVAL_LIFETIME).columns())
         return store.get(run_id)
 
-    def decide(run_id: str, who, body: Decision, verdict: str) -> dict:
+    def record_decision(run_id: str, who, body: Decision, decision: str) -> dict:
         admin, role = who
         if role < Role.APPROVER:
             raise HTTPException(403, "Only Approvers can approve or reject.")
@@ -374,27 +382,23 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         if run.requested_by == admin.email:
             raise HTTPException(403, "You can't approve or reject your own Run: an Approval "
                                      "is a second admin's consent.")
-        now = clock()
-        if approval_status(run, now) != AWAITING:
-            raise HTTPException(409, "This Run isn't waiting for an Approval (it may have "
-                                     "expired; the requester can ask again).")
         comment = recorded_text("comment", body.comment, settings.secret_env.values())
-        store.update(run_id, approval_status=verdict, approval_decided_by=admin.email,
-                     approval_decided_at=now, approval_comment=comment,
-                     **({"approval_expires_at": now + APPROVAL_LIFETIME}
-                        if verdict == APPROVED else {}))
+        if not store.decide_approval(run_id, decision, admin.email, comment):
+            raise HTTPException(409, "This Run isn't waiting for an Approval: it may have been "
+                                     "decided already or expired (the requester can ask "
+                                     "again).")
         return store.get(run_id)
 
     @app.post("/api/runs/{run_id}/approval/approve")
     def approve(run_id: str, body: Decision, who: SignedIn):
         """An Approver other than the requester consents, with a comment. Valid 24 hours."""
-        return decide(run_id, who, body, APPROVED)
+        return record_decision(run_id, who, body, APPROVED)
 
     @app.post("/api/runs/{run_id}/approval/reject")
     def reject(run_id: str, body: Decision, who: SignedIn):
         """An Approver other than the requester refuses, with a comment. Final for this
         dry run."""
-        return decide(run_id, who, body, REJECTED)
+        return record_decision(run_id, who, body, REJECTED)
 
     @app.get("/api/approvals")
     def waiting_for_approval(who: SignedIn):

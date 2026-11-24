@@ -256,3 +256,111 @@ def test_the_waiting_for_approval_queue(client, clock):
     assert [r["id"] for r in pending] == [second["id"]]
     clock.advance(hours=25)
     assert client.get("/api/approvals", headers=VIEWER).json()["pending"] == []
+
+
+# ---------- the rest of the engine's irreversible cases, through the service ----------
+
+def plan_upload(items):
+    plan = {"kind": "x", "items": items}
+    return [("file.plan_file", ("plan.json", json.dumps(plan).encode(), "application/json"))]
+
+
+def test_event_rules_conversion_always_needs_an_approval(client):
+    dry = reviewed(client, "ui-event-rules", values={"all": True}, subcommand="convert")
+    assert apply(client, dry["id"]).status_code == 403
+    assert ask(client, dry["id"]).json()["approval"]["reasons"] == ["always irreversible"]
+
+
+def test_a_pruning_templates_apply_needs_an_approval(client):
+    upload = [("file.input", ("templates.json", b"[]", "application/json"))]
+    dry = reviewed(client, "ui-templates", values={"prune": True}, files=upload,
+                   subcommand="apply")
+    assert ask(client, dry["id"]).json()["approval"]["reasons"] == ["--prune given"]
+
+
+def test_a_servicenow_plan_that_clears_an_id_needs_an_approval(client, monkeypatch):
+    monkeypatch.setenv("SN_PROD_INSTANCES", "dallastx")
+    monkeypatch.setenv("SN_REHEARSAL_INSTANCES", "dallastx-test")
+    upload = plan_upload([{"op": "sn_set_field", "field": "f", "value": ""}])
+    dry = reviewed(client, "ui-sn-sync", values={"instance": "dallastx-test"}, files=upload,
+                   subcommand="apply")
+    assert ask(client, dry["id"]).json()["approval"]["reasons"] == [
+        "plan has 1 sn_set_field item(s) clearing a value"]
+
+
+def test_a_servicenow_production_apply_needs_an_approval(client, monkeypatch):
+    monkeypatch.setenv("SN_PROD_INSTANCES", "dallastx")
+    monkeypatch.setenv("SN_REHEARSAL_INSTANCES", "dallastx-test")
+    setting = plan_upload([{"op": "sn_set_field", "field": "f", "value": "PABC"}])
+    rehearsal = reviewed(client, "ui-sn-sync", values={"instance": "dallastx-test"},
+                         files=setting, subcommand="apply")
+    assert ask(client, rehearsal["id"]).status_code == 409  # a rehearsal needs none
+    production = reviewed(client, "ui-sn-sync", values={"instance": "dallastx"},
+                          files=setting, subcommand="apply")
+    assert ask(client, production["id"]).json()["approval"]["reasons"] == [
+        "ServiceNow production instance dallastx"]
+
+
+# ---------- from review: say up front, decide once, withdraw after a mismatch ----------
+
+def test_the_review_says_whether_applying_needs_an_approval(client):
+    dry = irreversible(client)
+    needs = run(client, dry["id"])["approval"]
+    assert (needs["status"], needs["reasons"]) == (None, ["--purge given"])
+    assert run(client, reviewed(client)["id"])["approval"] is None
+
+
+def test_only_one_decision_counts(client):
+    dry = irreversible(client)
+    ask(client, dry["id"])
+    assert decide(client, dry["id"], "approve").status_code == 200
+    late = decide(client, dry["id"], "reject", headers=admin_header(
+        "PD-Ops-Approver", email="dan@dallas.gov", name="Dan"))
+    assert late.status_code == 409
+    assert run(client, dry["id"])["approval"]["status"] == "approved"
+
+
+def test_a_decision_is_recorded_only_while_the_request_is_open(settings, client, clock):
+    # The store's own check, so a decision racing the expiry (or another decision) loses.
+    from pagerduty_ops_ui.store import RunStore
+
+    dry = irreversible(client)
+    ask(client, dry["id"])
+    store = RunStore(settings.database_url, clock=clock)
+    clock.advance(hours=25)
+    assert store.decide_approval(dry["id"], "approved", "cat@dallas.gov", "ok") is False
+    assert run(client, dry["id"])["approval"]["status"] == "expired"
+
+
+def test_a_mismatch_withdraws_the_approval_of_the_dry_run_too(client, settings):
+    dry = irreversible(client)
+    ask(client, dry["id"])
+    decide(client, dry["id"], "approve")
+    settings.extra_env["UI_FIXTURE_DRIFT"] = "1"
+    assert wait(client, apply(client, dry["id"]).json()["id"])["outcome"] == "changed"
+    assert run(client, dry["id"])["approval"]["status"] == "withdrawn"
+    settings.extra_env.pop("UI_FIXTURE_DRIFT")  # even if the world moves back
+    assert apply(client, dry["id"]).status_code == 403
+    assert ask(client, dry["id"]).status_code == 409
+
+
+def test_an_applied_approval_shows_as_used_not_expired(client, clock):
+    dry = irreversible(client)
+    ask(client, dry["id"])
+    decide(client, dry["id"], "approve")
+    applied = wait(client, apply(client, dry["id"]).json()["id"])
+    clock.advance(hours=48)
+    assert run(client, applied["id"])["approval"]["status"] == "used"
+
+
+def test_an_approval_expiring_in_the_queue_says_so_plainly(client, settings, clock):
+    first, second = reviewed(client), irreversible(client)
+    ask(client, second["id"])
+    decide(client, second["id"], "approve")
+    settings.extra_env["UI_FIXTURE_APPLY_SLEEP"] = "3"
+    apply(client, first["id"])
+    b = apply(client, second["id"]).json()
+    clock.advance(hours=25)
+    blocked = wait(client, b["id"])
+    assert "couldn't run" not in blocked["message"] and "403" not in blocked["message"]
+    assert "Nothing was applied" in blocked["message"]

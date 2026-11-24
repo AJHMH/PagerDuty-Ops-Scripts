@@ -15,15 +15,16 @@ import shutil
 import threading
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 
+from fastapi import HTTPException
+
 from . import files as run_files
-from .approvals import require_approved
+from .approvals import Approval, require_approved
 from .overrides import CapOverride, check_reviewed
 from .review import MODE_FLAGS, input_hash, output_hash
 from .runner import OUTCOMES, Result, kill_leftover, run_command
-from .store import RUNNING, RunFile, RunRecord, RunStore, now
+from .store import RUNNING, RunFile, RunRecord, RunStore, now, utc_now
 
 # An apply whose fresh dry run no longer matched the review: nothing was applied (#74).
 CHANGED = "changed"
@@ -42,7 +43,7 @@ class InputChanged(Exception):
 
 class Executor:
     def __init__(self, store: RunStore, settings, catalog, clock=None):
-        self.clock = clock or (lambda: datetime.now(timezone.utc))
+        self.clock = clock or utc_now  # judges Approval expiry in the writing slot
         self.store = store
         self.settings = settings
         self.catalog = catalog
@@ -229,7 +230,7 @@ class Executor:
 
     def _apply(self, apply_id: str, cancel: threading.Event) -> None:
         """Inside the slot: a fresh dry run, then the apply only if it matches the review."""
-        from .gate import gate_apply  # gate imports fastapi; keep this module light
+        from .gate import gate_apply  # gate imports the engine's commands lazily
 
         apply = self.store.record(apply_id)
         dry = self.store.record(apply.applied_from)
@@ -239,7 +240,11 @@ class Executor:
         dry_argv, _, verdict = gate_apply(entry, neutral, dry_dir,
                                           self.settings.secret_env.values())
         check_reviewed(verdict, CapOverride.of(apply))  # cap defaults can change meanwhile
-        require_approved(verdict, apply, self.clock())  # an Approval can expire in the queue
+        try:  # an Approval can expire while the apply waits its turn
+            require_approved(verdict, Approval.of(apply), self.clock())
+        except HTTPException as e:
+            self._not_applied(apply_id, "failed", f"{e.detail} Nothing was applied.")
+            return
 
         fresh_id = str(uuid.uuid4())
         try:
@@ -282,6 +287,7 @@ class Executor:
             self._not_applied(apply_id, CHANGED, "What this would change has changed since "
                                                    "it was reviewed, so nothing was applied. "
                                                    "Review the fresh dry run.")
+            self.store.withdraw_approval(dry.id)  # a new diff needs a new Approval
         else:
             self._execute(apply_id, cancel)
 
