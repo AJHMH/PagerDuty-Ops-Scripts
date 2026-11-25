@@ -105,10 +105,13 @@ C:\pd-ops\
     logs\
 D:\pd-ops-data\
   runs\                 PD_UI_RUN_ROOT: each Run's input and output files (ADR 0007)
+    receipts\           the shared rehearsal receipts (PD_OPS_RECEIPTS_DIR), made on first use
 ```
 
 Put the Run files on the data disk, not `C:`. They are kept for 90 days (ADR 0013). If there
-is no `D:`, use `C:\pd-ops-data`.
+is no `D:`, use `C:\pd-ops-data`. `runs\receipts\` is not a Run: a production
+`pd-sn-sync` apply needs the receipt its rehearsal Run wrote there, so don't clean it up with
+the Run folders.
 
 ---
 
@@ -696,4 +699,11 @@ Run's process:
 | `SN_CLIENT_ID`, `SN_CLIENT_SECRET`, `SN_USER`, `SN_PASSWORD` | **yes** | Only for `SN_AUTH_METHOD=sn-oauth` / `basic` |
 | `PD_FROM_EMAIL` | no | `From` header for commands that need one |
 | `SN_INSTANCE`, `SN_PROD_INSTANCES`, `SN_REHEARSAL_INSTANCES`, `SN_FIELD_MAP`, `SN_AUTH_METHOD` | no | ServiceNow settings ([servicenow.md](servicenow.md)) |
+| `SN_RECEIPT_MAX_AGE_DAYS` | no | How long a rehearsal receipt unlocks production; default 7 |
 | `OKTA_DOMAIN`, `OKTA_AUTH_SERVER_ID`, `OKTA_SCOPE` | no | `pd-sn-sync`'s Okta authorization server and scope ([servicenow-okta-setup.md](servicenow-okta-setup.md)) |
+
+**Set by the service for every Run.**
+
+| Variable | Secret | Meaning |
+|---|---|---|
+| `PD_OPS_RECEIPTS_DIR` | no | The shared rehearsal receipts folder, so a production `pd-sn-sync` Run finds the receipt its rehearsal Run wrote. Default `<PD_UI_RUN_ROOT>\receipts` (`D:\pd-ops-data\runs\receipts`); set it in `pd-ui.xml` only to put receipts elsewhere. The service makes it absolute, and refuses `--receipts-dir` on a Run ([ui.md](ui.md#rehearsal-receipts)) |

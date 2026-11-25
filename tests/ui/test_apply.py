@@ -203,3 +203,15 @@ def test_a_log_file_argument_is_refused_because_the_service_captures_the_log(cli
                                headers=OPERATOR)
         assert response.status_code == 422
         assert "log" in response.json()["detail"]
+
+
+def test_a_receipts_dir_argument_is_refused_because_receipts_are_shared(client):
+    # A receipts directory inside the Run's own directory would let an uploaded file pose as
+    # a rehearsal receipt; receipts live in the service's one shared directory (ADR 0007).
+    for flag in (["--receipts-dir", "receipts"], ["--receipts-dir=receipts"],
+                 ["--receipts", "receipts"]):
+        argv = ["apply", "plan.json", "--instance", "dallastx", *flag]
+        response = client.post("/api/runs", json={"command": "ui-sn-sync", "argv": argv},
+                               headers=OPERATOR)
+        assert response.status_code == 422, response.text
+        assert "receipts" in response.json()["detail"]
