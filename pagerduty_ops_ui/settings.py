@@ -16,6 +16,8 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from . import phase
+
 # Environment variables that are secrets: passed to Runs, redacted from everything stored.
 SECRET_ENV_NAMES = (
     "PD_API_TOKEN",
@@ -57,6 +59,7 @@ class Settings:
     run_timeout_seconds: int = 2 * 3600  # ADR 0012; a command's declaration may extend it
     max_upload_bytes: int = 25 * 1024 * 1024
     max_request_bytes: int = 100 * 1024 * 1024
+    max_phase: int = phase.DEFAULT  # ADR 0016: 1 read only, 2 reversible applies, 3 all
     # ADR 0013: Runs and their files are purged after this many days; the Ledger is kept,
     # unless Records Management declines it (PD_UI_LEDGER=off), when it is purged too.
     retention_days: int = 90
@@ -93,6 +96,7 @@ class Settings:
             ledger_enabled=ledger_switch(),
             static_dir=Path(os.environ["PD_UI_STATIC_DIR"])
             if os.environ.get("PD_UI_STATIC_DIR") else None,
+            max_phase=phase.parse(os.environ.get(phase.ENV_NAME)),
         )
 
 

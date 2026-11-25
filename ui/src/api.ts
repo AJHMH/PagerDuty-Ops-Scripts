@@ -7,6 +7,8 @@ export interface Me {
   name: string;
   email: string;
   role: Role;
+  // PD_UI_MAX_PHASE (ADR 0016): 1 read only, 2 applies that can be undone, 3 everything.
+  max_phase: 1 | 2 | 3;
 }
 
 export interface Command {

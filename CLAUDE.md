@@ -3,7 +3,7 @@
 Python CLI toolkit for bulk PagerDuty administration. All logic lives in the `pagerduty_ops`
 package; root `pd_*.py` files are thin compatibility shims. A team web UI
 (`pagerduty_ops_ui`, `ui/`) is being built on top of the CLI as a thin layer: it runs commands,
-it never holds their logic (ADRs 0001–0015, `docs/ui.md`). Details live in `docs/` — this
+it never holds their logic (ADRs 0001–0016, `docs/ui.md`). Details live in `docs/` — this
 file is the short list of rules.
 
 ## Commands

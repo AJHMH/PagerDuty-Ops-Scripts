@@ -10,3 +10,6 @@
   applies; then read-only Scheduled runs (ADR 0014).
 
 Each phase is usable on its own, so the UI earns trust before it gains the power to write.
+
+*Amended by ADR 0016:* the code for a phase can ship before that phase is approved. Each
+server's `PD_UI_MAX_PHASE` says how far it has rolled out, and it defaults to Phase 1.

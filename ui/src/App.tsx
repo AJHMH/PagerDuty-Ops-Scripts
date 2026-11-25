@@ -58,7 +58,8 @@ export function App() {
       <main>{runMatch ? <RunPage id={decodeURIComponent(runMatch[1])} me={session.me} />
         : route.startsWith("/history") ? <HistoryPage hash={route} />
         : route.startsWith("/ledger") ? <LedgerPage hash={route} />
-        : <><RunForm role={session.me.role} /><QueuePanel /><ApprovalsPanel /></>}</main>
+        : <><RunForm role={session.me.role} /><QueuePanel />
+          {session.me.max_phase >= 3 && <ApprovalsPanel />}</>}</main>
     </>
   );
 }
