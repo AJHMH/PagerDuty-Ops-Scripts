@@ -251,5 +251,38 @@ export const decideApproval = (id: string, verdict: "approve" | "reject", commen
             { method: "POST", body: JSON.stringify({ comment }) });
 export const getApprovals = () => call<{ pending: RunSummary[] }>("/api/approvals");
 
+// A row of the permanent Ledger (#76): who requested and approved a Writing run, when, and
+// how it ended. Never its arguments, inputs, diff or output.
+export interface LedgerRow {
+  run_id: string;
+  command: string;
+  requested_by: string;
+  requester_name: string;
+  requester_role: Role;
+  approved_by: string | null;
+  queued_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  outcome: Outcome | null;
+  run_kept: boolean;  // false once the Run itself is purged: there is no page to link to
+}
+
+export interface LedgerPage {
+  enabled: boolean;  // false while Records Management's decision keeps it off
+  retention_days: number;  // how long the Runs themselves are kept
+  rows: LedgerRow[];
+  total: number;
+  page: number;
+  per_page: number;
+}
+
+export function getLedger(filters: HistoryFilters): Promise<LedgerPage> {
+  const query = new URLSearchParams();
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== "") query.set(key, String(value));
+  }
+  return call<LedgerPage>(`/api/ledger?${query}`);
+}
+
 export const fileUrl = (runId: string, fileId: number) =>
   `/api/runs/${encodeURIComponent(runId)}/files/${fileId}`;
