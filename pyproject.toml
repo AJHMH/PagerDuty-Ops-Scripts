@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pagerduty-ops-scripts"
-version = "1.0.0"
+version = "1.2.0"
 description = "Production-hardened operational automation for PagerDuty"
 readme = "README.md"
 requires-python = ">=3.10"
