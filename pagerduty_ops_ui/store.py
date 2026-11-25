@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import functools
+import logging
+import time
 from datetime import datetime, timezone
 
 from sqlalchemy import (
@@ -19,6 +22,7 @@ from sqlalchemy import (
     select,
     update,
 )
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import DeclarativeBase, Mapped, Session, load_only, mapped_column
 
 from .approvals import APPROVAL_LIFETIME, APPROVED, AWAITING, WITHDRAWN, Approval
@@ -31,6 +35,37 @@ PURGE_BATCH = 500  # Run IDs per DELETE, well under SQL Server's 2100-parameter 
 APPLY = "apply"  # the kind of a Writing run
 RUN_KINDS = ("report", "dry-run", APPLY)
 UNFINISHED = "unfinished"  # history filter: Runs still queued or running (no outcome yet)
+# A read that SQL Server picks as a deadlock victim (for example against the purge's locked
+# deletes) is tried again this many times in all, a little later each time.
+READ_ATTEMPTS = 3
+READ_RETRY_SECONDS = 0.05
+
+log = logging.getLogger(__name__)
+
+
+def is_deadlock(error: DBAPIError) -> bool:
+    """SQL Server chose this statement as a deadlock victim (SQLSTATE 40001, error 1205): its
+    transaction was rolled back, so running it again is safe. SQLite never reports this."""
+    orig = getattr(error, "orig", None)
+    args = getattr(orig, "args", ())
+    return (bool(args) and str(args[0]) == "40001") or "(1205)" in str(orig)
+
+
+def retries_deadlocks(read):
+    """Run a read-only store method again when it loses a deadlock. Only for methods that
+    change nothing: a write's caller must decide whether its effects can be repeated."""
+    @functools.wraps(read)
+    def wrapper(*args, **kwargs):
+        for attempt in range(1, READ_ATTEMPTS + 1):
+            try:
+                return read(*args, **kwargs)
+            except DBAPIError as e:
+                if attempt == READ_ATTEMPTS or not is_deadlock(e):
+                    raise
+                log.warning("%s lost a deadlock (attempt %d of %d); trying again",
+                            read.__name__, attempt, READ_ATTEMPTS)
+                time.sleep(READ_RETRY_SECONDS * attempt)
+    return wrapper
 
 
 def utc_now() -> datetime:
@@ -298,6 +333,7 @@ class RunStore:
                 session.add(f)
         return self.get(run_id)
 
+    @retries_deadlocks
     def get(self, run_id: str) -> dict | None:
         with Session(self.engine) as session:
             run = session.scalar(select(RunRecord).where(RunRecord.id == run_id))
@@ -327,11 +363,13 @@ class RunStore:
                                    RunRecord.applied_run_id == apply_id)
                             .values(applied_run_id=None))
 
+    @retries_deadlocks
     def record(self, run_id: str) -> RunRecord | None:
         """The Run's row itself (detached), for the executor."""
         with Session(self.engine, expire_on_commit=False) as session:
             return session.get(RunRecord, run_id)
 
+    @retries_deadlocks
     def files(self, run_id: str, role: str | None = None) -> list[RunFile]:
         with Session(self.engine, expire_on_commit=False) as session:
             query = select(RunFile).where(RunFile.run_id == run_id)
@@ -420,12 +458,14 @@ class RunStore:
             self._write_ledger(session, [run_id])
             return True
 
+    @retries_deadlocks
     def next_queued(self) -> str | None:
         """The Writing run that has waited longest."""
         with Session(self.engine) as session:
             return session.scalar(select(RunRecord.id).where(RunRecord.status == QUEUED)
                                   .order_by(RunRecord.queued_at, RunRecord.id).limit(1))
 
+    @retries_deadlocks
     def queue(self) -> dict:
         """The executing Writing run, if any, and the ones waiting, oldest first."""
         with Session(self.engine) as session:
@@ -458,6 +498,7 @@ class RunStore:
             self._write_ledger(session, interrupted_ids)
         return pids
 
+    @retries_deadlocks
     def search(self, *, command: str | None = None, requester: str | None = None,
                since: datetime | None = None, before: datetime | None = None,
                outcome: str | None = None, kind: str | None = None,
@@ -511,6 +552,7 @@ class RunStore:
                                    RunRecord.approval_status == APPROVED)
                             .values(approval_status=WITHDRAWN))
 
+    @retries_deadlocks
     def awaiting_approval(self) -> list[dict]:
         """Requests waiting for an Approver (not yet expired), oldest first (#77)."""
         now = self.clock().astimezone(timezone.utc)  # stored times are UTC
@@ -559,11 +601,13 @@ class RunStore:
                 session.execute(delete(LedgerRow).where(LedgerRow.queued_at < cutoff))
         return purged
 
+    @retries_deadlocks
     def run_ids(self) -> set[str]:
         """Every Run's ID, for the purge to find folders no Run owns."""
         with Session(self.engine) as session:
             return set(session.scalars(select(RunRecord.id)))
 
+    @retries_deadlocks
     def ledger(self, *, command: str | None = None, requester: str | None = None,
                since: datetime | None = None, before: datetime | None = None,
                outcome: str | None = None, page: int = 1, per_page: int = 50) -> dict:
@@ -585,6 +629,7 @@ class RunStore:
                     "rows": [ledger_dict(r, r.run_id in kept) for r in rows],
                     "total": total, "page": page, "per_page": per_page}
 
+    @retries_deadlocks
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:
             f = session.scalar(select(RunFile).where(RunFile.id == file_id,
