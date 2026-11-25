@@ -6,6 +6,7 @@ import { LedgerPage } from "./LedgerPage";
 import { QueuePanel } from "./QueuePanel";
 import { RunForm } from "./RunForm";
 import { RunPage } from "./RunPage";
+import { SchedulesPage } from "./SchedulesPage";
 
 // Hash routes keep the static bundle servable from any path: "#/" and "#/runs/<id>".
 function useRoute(): string {
@@ -52,12 +53,13 @@ export function App() {
     <>
       <header>
         <a href="#/" className="brand">PagerDuty Ops</a>
-        <nav><a href="#/">Run</a> · <a href="#/history">History</a> · <a href="#/ledger">Ledger</a></nav>
+        <nav><a href="#/">Run</a> · <a href="#/history">History</a> · <a href="#/ledger">Ledger</a> · <a href="#/schedules">Schedules</a></nav>
         <span>{session.me.name} · {session.me.role} · <a href="/auth/logout">Sign out</a></span>
       </header>
       <main>{runMatch ? <RunPage id={decodeURIComponent(runMatch[1])} me={session.me} />
         : route.startsWith("/history") ? <HistoryPage hash={route} />
         : route.startsWith("/ledger") ? <LedgerPage hash={route} />
+        : route.startsWith("/schedules") ? <SchedulesPage role={session.me.role} />
         : <><RunForm role={session.me.role} /><QueuePanel />
           {session.me.max_phase >= 3 && <ApprovalsPanel />}</>}</main>
     </>

@@ -1,4 +1,5 @@
-"""Teams notifications for Approvals (#78, ADR 0011).
+"""Teams notifications for Approvals (#78, ADR 0011), and for Drift that a Scheduled run
+finds (#80, ADR 0014).
 
 When an Approval is asked for, approved or rejected, and when a request or an unused Approval
 expires, the service posts a message to the admin team's Teams channel through a Workflows
@@ -109,6 +110,17 @@ def describe(event: str, run: dict, base_url: str | None) -> dict:
                            ("Expired", _when(approval.get("expires_at")))], link)
 
 
+def describe_drift(run: dict, schedule_name: str | None, base_url: str | None) -> dict:
+    """The message for Drift found by a Scheduled run (#80): which schedule, the command's
+    own summary line (e.g. "Findings: info=0, warning=3, error=1") and when it ran. Never
+    the findings themselves: those are on the Run page."""
+    link = f"{base_url.rstrip('/')}/#/runs/{quote(run['id'])}" if base_url else None
+    return message(f"Drift found: {run['command']}", [
+        ("Schedule", schedule_name or "(deleted)"),
+        ("Summary", run.get("drift_summary") or "See the Run."),
+        ("Ran", _when(run.get("started_at") or run.get("queued_at")))], link)
+
+
 class TeamsNotifier:
     """Posts Approval events to Teams in the background. Without a webhook URL it does
     nothing, and the service runs as before."""
@@ -142,6 +154,15 @@ class TeamsNotifier:
             self._queue.put(describe(event, run, self.base_url))
         except Exception:  # noqa: BLE001 - a notification must never fail the Approval
             log.exception("Couldn't prepare the Teams notification for Run %s", run.get("id"))
+
+    def drift_event(self, run: dict, schedule_name: str | None) -> None:
+        """Queue "Drift found" for a finished Scheduled run (#80); never raises."""
+        if not self.enabled:
+            return
+        try:
+            self._queue.put(describe_drift(run, schedule_name, self.base_url))
+        except Exception:  # noqa: BLE001 - a notification must never fail the schedule
+            log.exception("Couldn't prepare the Drift notification for Run %s", run.get("id"))
 
     def sweep_expiries(self) -> int:
         """Announce each request or unused Approval that has expired since the last sweep;

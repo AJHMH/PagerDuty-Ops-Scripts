@@ -5,7 +5,7 @@ import { FieldInput, type FieldValue } from "./FieldInput";
 
 // Turn what was typed into the values the service expects; empty and default choices are left
 // out so the command line stays minimal.
-function collect(fields: Field[], state: Record<string, FieldValue>) {
+export function collect(fields: Field[], state: Record<string, FieldValue>) {
   const values: Values = {};
   const files: Record<string, File[]> = {};
   for (const f of fields) {
@@ -21,7 +21,7 @@ function collect(fields: Field[], state: Record<string, FieldValue>) {
   return { values, files };
 }
 
-function Fields({ fields, state, set }: {
+export function Fields({ fields, state, set }: {
   fields: Field[];
   state: Record<string, FieldValue>;
   set: (dest: string, v: FieldValue) => void;

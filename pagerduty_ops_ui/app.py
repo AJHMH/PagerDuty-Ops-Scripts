@@ -49,6 +49,14 @@ from .phase import require_apply, require_approvals
 from .retention import Purger
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
+from .schedules import (
+    Scheduler,
+    check_schedulable,
+    clean_name,
+    new_schedule,
+    parse_timing,
+    schedule_dict,
+)
 from .settings import Settings
 from .store import (
     FINISHED,
@@ -88,6 +96,17 @@ def parse_instant(name: str, value: str | None) -> datetime | None:
     if instant.tzinfo is None:
         raise HTTPException(422, f"{name} needs a timezone, e.g. 2026-11-02T00:00:00-06:00.")
     return instant.astimezone(timezone.utc)
+
+
+class ScheduleBody(BaseModel):
+    """A schedule for a read-only command (#80): its name, the command and form values a Run
+    would take (no files), and when it runs."""
+
+    name: str
+    command: str
+    subcommand: str | None = None
+    values: dict = Field(default_factory=dict)
+    timing: dict
 
 
 class Decision(BaseModel):
@@ -159,9 +178,11 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         executor.start()  # Stopped for what a restart cut off; the queue resumes
         purger.start()  # the purge, in the background: now, then daily (#76)
         notifier.start()  # Approval messages to Teams, and the expiry sweep (#78)
+        scheduler.start()  # Scheduled runs, and their Drift (#80)
         try:
             yield
         finally:
+            await run_in_threadpool(scheduler.stop)
             await run_in_threadpool(notifier.stop)
             await run_in_threadpool(purger.stop)
             await run_in_threadpool(executor.stop)
@@ -518,7 +539,115 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         run = store.get(run_id)
         if run is None:
             raise HTTPException(404, "No such Run.")
+        if run["schedule_id"]:  # a Scheduled run names its schedule, if it still exists
+            schedule = store.schedule(run["schedule_id"])
+            run["schedule_name"] = schedule.name if schedule else None
         return run
+
+    # ---------- Scheduled runs (#80, ADR 0014) ----------
+
+    def start_scheduled(entry, argv, verdict, record, run_id) -> None:
+        """A Scheduled run is a report Run, requested by the schedule's creator."""
+        start_now(new_run(run_id, entry.name, argv, "report", scheduled_by(record), [],
+                          at=clock(), timeout_seconds=timeout_for(verdict),
+                          schedule_id=record.id), [])
+
+    def refuse_scheduled(record, run_id, reason: str) -> None:
+        """A firing the engine refused is still recorded, so the history says why."""
+        store.save(new_run(run_id, record.command, [], "report", scheduled_by(record), [],
+                           at=clock(), timeout_seconds=settings.run_timeout_seconds,
+                           schedule_id=record.id))
+        store.finish(run_id, outcome="usage-error",
+                     note=f"Not run: the schedule was refused. {reason}")
+
+    def scheduled_by(record) -> Requester:
+        return Requester(record.created_by, record.creator_name, record.creator_role)
+
+    scheduler = Scheduler(store, settings, catalog, notifier, clock=clock,
+                          start_run=start_scheduled, refuse_run=refuse_scheduled)
+    app.state.scheduler = scheduler  # tests drive the ticks directly
+
+    def operator(role: Role, action: str) -> None:
+        if role < Role.OPERATOR:
+            raise HTTPException(403, f"Only Operators and Approvers can {action} schedules.")
+
+    def existing_schedule(schedule_id: str):
+        record = store.schedule(schedule_id)
+        if record is None:
+            raise HTTPException(404, "No such schedule.")
+        return record
+
+    def judged(body: ScheduleBody):
+        """The schedule's name, command and timing, once the engine has judged its command
+        line read-only (403 otherwise)."""
+        entry = catalog.get(body.command)
+        if entry is None:
+            raise HTTPException(404, f"Unknown command {body.command!r}.")
+        name, timing = clean_name(body.name), parse_timing(body.timing)
+        check_schedulable(entry, body.subcommand, body.values, settings.secret_env.values())
+        return entry, name, timing
+
+    @app.get("/api/schedules")
+    def list_schedules(who: SignedIn):
+        return {"schedules": [schedule_dict(r) for r in store.schedules()]}
+
+    @app.get("/api/schedules/{schedule_id}")
+    def get_schedule(schedule_id: str, who: SignedIn):
+        return schedule_dict(existing_schedule(schedule_id))
+
+    @app.post("/api/schedules", status_code=201)
+    def create_schedule(body: ScheduleBody, who: SignedIn):
+        admin, role = who
+        operator(role, "create")
+        entry, name, timing = judged(body)
+        record = new_schedule(name=name, entry=entry, subcommand=body.subcommand,
+                              values=body.values, timing=timing, admin=admin, role=role,
+                              now=clock())
+        return schedule_dict(store.save_schedule(record))
+
+    @app.put("/api/schedules/{schedule_id}")
+    def edit_schedule(schedule_id: str, body: ScheduleBody, who: SignedIn):
+        """Replace a schedule's name, command line and timing. It stays its creator's: the
+        editor is recorded as the last to change it."""
+        admin, role = who
+        operator(role, "edit")
+        record = existing_schedule(schedule_id)
+        entry, name, timing = judged(body)
+        now = clock()
+        store.update_schedule(schedule_id, name=name, command=entry.name,
+                              subcommand=body.subcommand, values=body.values,
+                              timing=timing.as_dict(), next_run_at=timing.next_after(now),
+                              updated_by=admin.email, updated_at=now)
+        return schedule_dict(existing_schedule(record.id))
+
+    @app.post("/api/schedules/{schedule_id}/pause")
+    def pause_schedule(schedule_id: str, who: SignedIn):
+        admin, role = who
+        operator(role, "pause")
+        existing_schedule(schedule_id)
+        store.update_schedule(schedule_id, paused=True, updated_by=admin.email,
+                              updated_at=clock())
+        return schedule_dict(existing_schedule(schedule_id))
+
+    @app.post("/api/schedules/{schedule_id}/resume")
+    def resume_schedule(schedule_id: str, who: SignedIn):
+        """Times missed while paused don't run: it is next due after now."""
+        admin, role = who
+        operator(role, "resume")
+        record = existing_schedule(schedule_id)
+        now = clock()
+        store.update_schedule(schedule_id, paused=False,
+                              next_run_at=parse_timing(record.timing).next_after(now),
+                              updated_by=admin.email, updated_at=now)
+        return schedule_dict(existing_schedule(schedule_id))
+
+    @app.delete("/api/schedules/{schedule_id}", status_code=204)
+    def delete_schedule(schedule_id: str, who: SignedIn):
+        """Its Scheduled runs stay in the history."""
+        _, role = who
+        operator(role, "delete")
+        if not store.delete_schedule(schedule_id):
+            raise HTTPException(404, "No such schedule.")
 
     @app.get("/api/runs/{run_id}/files/{file_id}")
     def download(run_id: str, file_id: int, who: SignedIn):

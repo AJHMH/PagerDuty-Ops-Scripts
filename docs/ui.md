@@ -163,6 +163,19 @@ A message carries no arguments, inputs, diff lines or comments. The webhook URL 
 - **The purge.** Runs, their stored files and their records are deleted once they are 90 days old (by when they were requested); only finished Runs are purged. Runs that refer to each other go together: a dry run is kept while any apply made from it, or that apply's fresh dry run, is younger or still queued or running. Deletes run in batches, each committed on its own. The service purges in the background when it starts and then once a day. It also sweeps folders in `PD_UI_RUN_ROOT` that no Run owns and that are over a day old (left by a crash, or by a delete that failed); a folder it can't delete, say because a file in it is open, is logged as a warning and tried again next time. The Ledger is never purged. On SQL Server, a read of the Runs table (a page, or the writer looking for the next queued apply) can deadlock with the purge's locked deletes; the store's read-only methods try a read that loses a deadlock (error 1205) again, up to three times in all, and log a warning each time. Writes are not retried.
 - **Switching the Ledger off.** Records Management is still to confirm the Ledger fits City retention. If they decline, set `PD_UI_LEDGER=off`: no new rows are written, the purge removes Ledger rows older than 90 days too, and `GET /api/ledger` reports `enabled: false`.
 
+## Scheduled runs (#80, ADR 0014)
+
+Operators and Approvers can run read-only commands on a schedule, in place of cron: for example a nightly `pd-validate`. The Schedules page (`#/schedules`) lists them for every role.
+
+- **Only read-only commands.** A schedule's command line is judged by the engine's `assess()` when it is saved and again each time it fires. Anything that writes is refused (403), and so is a dry run of a writing command, since nobody would review or approve it (ADRs 0003, 0011). If the engine refuses a schedule when it fires (say, the command now writes), the firing is still recorded as a Run, `usage-error`, saying why.
+- **Arguments only.** A schedule stores the form values a Run would take, without uploaded files (422).
+- **When.** Every day at a time, on chosen days of the week at a time, or every 1, 2, 3, 4, 6, 8 or 12 hours from midnight at a minute past the hour. Times are Central (America/Chicago) and follow daylight saving. When clocks spring forward, a missing time (02:30) runs an hour later on the clock (03:30 CDT). When they fall back, a time that happens twice (01:30) runs once, the first time. The `tzdata` package supplies the time zone on Windows.
+- **Once per due time, at most.** The service checks every 30 seconds. A due schedule is claimed by moving its next time to the first one after now, so after a restart, or any delay, missed times run once, not once each. A paused schedule doesn't run, and resuming it doesn't run what it missed.
+- **In the history.** A Scheduled run is a report Run, requested by the schedule's creator, with `schedule_id` set. The History marks it "scheduled", and its page names the schedule. Editing a schedule keeps its creator and records who edited it. Deleting one keeps its Runs.
+- **Drift.** A command declares what Drift looks like: `pd-validate` exits `DRIFT_EXIT_CODE` (1) after logging its `Findings: info=…, warning=…, error=…` line. An API failure exits 1 too, but before that line, so it isn't Drift. When a finished Scheduled run matches, its `drift` is recorded with that summary line, and the Teams channel gets "Drift found: <command>" with the schedule's name, the summary and a link to the Run (#78's webhook). Each Run is decided once, so a restart neither misses nor repeats it. Commands that declare nothing never report Drift.
+
+The API: `GET /api/schedules` (every role), `POST /api/schedules`, `GET|PUT|DELETE /api/schedules/{id}` and `POST /api/schedules/{id}/pause|resume`. A body is `{name, command, subcommand, values, timing: {kind: daily|weekly|hourly, at: "HH:MM", days: [0-6], every_hours}}`.
+
 ## One writing Run at a time (#74, ADR 0012)
 
 - **The queue.** Only one apply executes at a time across the account; the others wait, oldest first. Reports and dry runs never wait. The queue is the `queued` rows of the Run store, so it survives a restart. `GET /api/queue` (any role) returns `{executing, pending}`, and the home page shows it.
@@ -266,6 +279,4 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 
 ## Not yet
 
-These are later tickets:
-- the Windows host packaging (#71);
-- the rest of Phase 3: scheduled read-only Runs (#80).
+Every ticket under the spec (#62) is done. New work gets a ticket of its own.

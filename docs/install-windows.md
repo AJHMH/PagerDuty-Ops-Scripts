@@ -587,6 +587,7 @@ Do all of these on DEV and TEST, and attach the results to the security review.
 | 8a | Confirm the PagerDuty key in the vault is read-only, and the ServiceNow integration user has no write ACLs (Phase 1) | Confirmed by the PagerDuty and ServiceNow admins |
 | 8b | At Phase 1, open `https://<host>/api/me`, then as an Operator review a dry run of a writing command | `max_phase` is `1`; the Run page says the service is read only and offers no Apply |
 | 8c | At Phase 3, with `PD_UI_TEAMS_WEBHOOK_URL` set: ask for an Approval of a dry run of an Irreversible operation (on DEV), then have another admin reject it | The admin team's channel gets "Approval requested: …" with a working link to the Run, then "Rejected: …" |
+| 8d | On the Schedules page, schedule `pd-validate` every hour (DEV), wait for it, then pause it | A Run marked "scheduled" in the History; if it found Drift and `PD_UI_TEAMS_WEBHOOK_URL` is set, "Drift found: pd-validate" in the channel |
 | 9 | Run history shows the Run after `Restart-Service pd-ui` | Still listed; anything that was executing shows Stopped |
 | 10 | Stop the service while a long read-only Run executes, then `Get-Process python` | No Run processes left; the Run shows Stopped |
 | 11 | Secrets aren't on disk (below) | No matches |
