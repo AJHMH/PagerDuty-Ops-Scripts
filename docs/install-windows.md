@@ -378,7 +378,9 @@ Copy `WinSW-x64.exe` to `C:\pd-ops\service\pd-ui.exe`, and create
   <env name="PD_FROM_EMAIL" value="pd-ops-service@dallas.gov"/>
   <env name="SN_INSTANCE" value="dallastx-dev"/>
   <env name="SN_PROD_INSTANCES" value="dallastx"/>
-  <env name="SN_REHEARSAL_INSTANCES" value="dallastx-dev,dallastx-test"/>
+  <!-- Only instances whose receipts may unlock production: never dallastx-dev
+       (docs/servicenow.md). -->
+  <env name="SN_REHEARSAL_INSTANCES" value="dallastx-test"/>
   <env name="SN_AUTH_METHOD" value="okta"/>
   <env name="OKTA_DOMAIN" value="ORG.okta.com"/>
   <env name="OKTA_AUTH_SERVER_ID" value="AUTH_SERVER_ID"/>
