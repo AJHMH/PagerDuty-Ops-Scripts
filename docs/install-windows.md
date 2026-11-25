@@ -401,10 +401,12 @@ Install the service, then set its account. Don't put the account's password in t
 C:\pd-ops\service\pd-ui.exe install
 ```
 
-For a gMSA, set the account with no password:
+For a gMSA, set the account with no password. `--%` passes the rest of the line to `sc.exe`
+as written: without it, Windows PowerShell 5.1 drops the empty password argument and
+`sc.exe` rejects the command.
 
 ```powershell
-sc.exe config pd-ui obj= 'CITY\svc-pdops$' password= ''
+sc.exe --% config pd-ui obj= "CITY\svc-pdops$" password= ""
 ```
 
 For a domain account, set it in **services.msc** → *PagerDuty Ops UI* → *Log On*, and type
@@ -602,8 +604,19 @@ is executing is stopped.
 2. Ask the DBA for a backup of `PDOps`, and note its time.
 3. Stop the service: `Stop-Service pd-ui`. This waits for executing Runs to stop; queued
    applies stay queued.
-4. As the DBA or deploy account, migrate with the **new** release:
-   `& C:\pd-ops\releases\<new>\venv\Scripts\pd-ui-migrate.exe`.
+4. As the DBA or deploy account, in a PowerShell session run as that account, migrate with
+   the **new** release. The connection URL is set only in `pd-ui.xml` for the service, so
+   set it again here:
+
+   ```powershell
+   $env:PD_UI_DATABASE_URL = '<connection URL from section 5>'
+   & C:\pd-ops\releases\<new>\venv\Scripts\pd-ui-migrate.exe
+   "Exit code: $LASTEXITCODE"
+   ```
+
+   Go on only if the exit code is 0. Otherwise leave the junction alone, start the service
+   again on the old release, and fix the cause (2: not set or couldn't connect; 3: login
+   refused; 1: the migration failed and rolled back).
 5. Switch the junction:
 
    ```powershell
