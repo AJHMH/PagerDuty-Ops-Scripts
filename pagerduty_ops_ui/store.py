@@ -539,11 +539,17 @@ class RunStore:
         purged: list[str] = []
         for batch in _batches(due):
             with Session(self.engine) as session, session.begin():
-                # A dry run an apply was claimed from since the read above stays.
+                # A dry run an apply was claimed from since the read above stays. The rows
+                # are locked until the deletes commit, so a claim racing this purge waits,
+                # finds the dry run gone and is refused, rather than queueing an apply
+                # whose dry run is then deleted.
                 gone = list(session.scalars(select(RunRecord.id).where(
                     RunRecord.id.in_(batch), RunRecord.status == FINISHED,
                     or_(RunRecord.applied_run_id.is_(None),
-                        RunRecord.applied_run_id.in_(batch)))))
+                        RunRecord.applied_run_id.in_(batch)))
+                    # SQL Server's dialect ignores FOR UPDATE: it needs the table hint.
+                    .with_hint(RunRecord, "WITH (UPDLOCK, ROWLOCK)", "mssql")
+                    .with_for_update()))
                 if gone:
                     session.execute(delete(RunFile).where(RunFile.run_id.in_(gone)))
                     session.execute(delete(RunRecord).where(RunRecord.id.in_(gone)))
