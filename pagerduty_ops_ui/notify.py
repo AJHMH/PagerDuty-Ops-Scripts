@@ -62,8 +62,12 @@ def message(title: str, facts: list[tuple[str, str]], link: str | None) -> dict:
 
 
 def _when(value: str | None) -> str:
+    """The store's UTC timestamp ("...Z") as "YYYY-MM-DD HH:MM UTC". Python 3.10's
+    fromisoformat() doesn't accept "Z", so it is spelled as "+00:00" first."""
     if not value:
         return "unknown"
+    if value.endswith("Z"):
+        value = value[:-1] + "+00:00"
     return datetime.fromisoformat(value).strftime("%Y-%m-%d %H:%M UTC")
 
 

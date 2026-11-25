@@ -261,6 +261,13 @@ def test_the_webhook_must_be_https_and_isnt_echoed(monkeypatch):
     assert teams_webhook() is None
 
 
+def test_times_are_shown_in_utc_on_every_supported_python():
+    # The store writes "...Z"; Python 3.10's fromisoformat() rejects that spelling.
+    assert notify._when("2026-11-26T04:35:33.849250Z") == "2026-11-26 04:35 UTC"
+    assert notify._when("2026-11-26T04:35:33+00:00") == "2026-11-26 04:35 UTC"
+    assert notify._when(None) == "unknown"
+
+
 def test_links_use_the_services_own_origin():
     assert origin("https://pd-ops.dallas.gov/auth/callback") == "https://pd-ops.dallas.gov"
 
