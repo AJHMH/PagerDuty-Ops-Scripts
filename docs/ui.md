@@ -138,9 +138,9 @@ A rejection is final for that dry run: the requester runs a new dry run and asks
 
 ## The Ledger and the 90-day purge (#76, ADR 0013)
 
-- **The Ledger.** Every finished Writing run (an apply), whatever its outcome, Stopped and cancelled-before-it-started included, leaves one permanent row: the Run ID, command, requester, approver (if it needed an Approval), when it was requested, started and finished, and its outcome. Never its arguments, inputs, diff or output. The row is written in the same transaction that records the apply as finished, so none is missed. `GET /api/ledger` shows it to every role, newest first, with the history's filters (`command`, `requester`, `since`, `before`, `outcome`) and paging; the Ledger page shows the same.
-- **The purge.** Runs, their stored files and their records are deleted once they are 90 days old (by when they were requested); only finished Runs are purged. The service purges when it starts and then once a day. The Ledger is never purged.
-- **Switching the Ledger off.** Records Management is still to confirm the Ledger fits City retention. If they decline, set `PD_UI_LEDGER=off`: no rows are written, the purge removes Ledger rows older than 90 days too, and `GET /api/ledger` reports `enabled: false`.
+- **The Ledger.** Every finished Writing run (an apply), whatever its outcome, Stopped and cancelled-before-it-started included, leaves one permanent row: the Run ID, command, requester, approver (if it needed an Approval), when it was requested, started and finished, and its outcome. Never its arguments, inputs, diff or output. The row is written in the same transaction that records the apply as finished, so none is missed. `GET /api/ledger` shows it to every role, newest first, with the history's filters (`command`, `requester`, `since`, `before`, `outcome`) and paging; the Ledger page shows the same. Each row's `run_kept` says whether the Run itself is still kept: once it is purged, the page shows "(Run purged)" instead of a link.
+- **The purge.** Runs, their stored files and their records are deleted once they are 90 days old (by when they were requested); only finished Runs are purged. Runs that refer to each other go together: a dry run is kept while any apply made from it, or that apply's fresh dry run, is younger or still queued or running. Deletes run in batches, each committed on its own. The service purges in the background when it starts and then once a day. It also sweeps folders in `PD_UI_RUN_ROOT` that no Run owns and that are over a day old (left by a crash, or by a delete that failed); a folder it can't delete, say because a file in it is open, is logged as a warning and tried again next time. The Ledger is never purged.
+- **Switching the Ledger off.** Records Management is still to confirm the Ledger fits City retention. If they decline, set `PD_UI_LEDGER=off`: no new rows are written, the purge removes Ledger rows older than 90 days too, and `GET /api/ledger` reports `enabled: false`.
 
 ## One writing Run at a time (#74, ADR 0012)
 
@@ -191,7 +191,7 @@ A Run receives them only as environment variables. Apart from them, it gets a sh
 | `PD_UI_OKTA_ISSUER`, `PD_UI_OKTA_CLIENT_ID`, `PD_UI_OKTA_CLIENT_SECRET`, `PD_UI_OKTA_REDIRECT_URI` | Okta OIDC app. The ID token must include a `groups` claim |
 | `PD_UI_STATIC_DIR` | The built front end (`ui/dist`) |
 | `PD_UI_PORT` | Port on 127.0.0.1 (default 8080). IIS proxies to it |
-| `PD_UI_LEDGER` | `off` switches the permanent Ledger off, if Records Management declines it (ADR 0013); default on |
+| `PD_UI_LEDGER` | `off` (or `false`, `0`, `no`) switches the permanent Ledger off, if Records Management declines it (ADR 0013); `on` (or `true`, `1`, `yes`, or unset) keeps it on. Anything else stops the service with a configuration error |
 | `PD_API_TOKEN`, `SN_*`, `OKTA_*` | Engine credentials and settings, passed through to Runs |
 
 ## Running it

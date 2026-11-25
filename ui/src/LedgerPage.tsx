@@ -23,7 +23,7 @@ function hashFor(form: Form, page: number): string {
 }
 
 // The permanent Ledger (#76, ADR 0013): one row per finished Writing run, kept after the Run
-// itself is purged at 90 days. A purged Run's row has no page to link to.
+// itself is purged. A purged Run's row has no page to link to, and says so.
 export function LedgerPage({ hash }: { hash: string }) {
   const urlKey = hash.split("?")[1] ?? "";
   const { page } = parse(urlKey);
@@ -65,10 +65,11 @@ export function LedgerPage({ hash }: { hash: string }) {
     <article>
       <h1>Ledger</h1>
       <p className="hint">Who requested and approved each change, and how it ended. Kept after
-        the Run itself is purged at 90 days; it never holds arguments, inputs or output.</p>
+        the Run itself is purged{result ? ` at ${result.retention_days} days` : ""}; it never
+        holds arguments, inputs or output.</p>
       {result && !result.enabled && (
-        <p className="notice">The Ledger is switched off (PD_UI_LEDGER=off), so no rows are
-          kept.</p>
+        <p className="notice">The Ledger is switched off (PD_UI_LEDGER=off): no new rows are
+          written, and the rows already here are purged with their Runs.</p>
       )}
       <form className="filters" onSubmit={(e: FormEvent) => { e.preventDefault(); go(form); }}
             aria-label="Filter the Ledger">
@@ -111,8 +112,10 @@ export function LedgerPage({ hash }: { hash: string }) {
                 {result.rows.map((row) => (
                   <tr key={row.run_id}>
                     <td>{new Date(row.queued_at).toLocaleString()}</td>
-                    <td><a href={`#/runs/${encodeURIComponent(row.run_id)}`}
-                           title="The Run's own page, until it is purged">{row.command}</a></td>
+                    <td>{row.run_kept
+                      ? <a href={`#/runs/${encodeURIComponent(row.run_id)}`}
+                           title="The Run's own page, until it is purged">{row.command}</a>
+                      : <>{row.command} <span className="hint">(Run purged)</span></>}</td>
                     <td title={row.requested_by}>{row.requester_name}</td>
                     <td>{row.approved_by ?? "—"}</td>
                     <td>{row.finished_at ? new Date(row.finished_at).toLocaleString() : "—"}</td>

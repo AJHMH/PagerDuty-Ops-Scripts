@@ -8,7 +8,8 @@ from conftest import APPROVER, OPERATOR, SECRET, VIEWER, admin_header, finished,
 
 OTHER_APPROVER = admin_header("PD-Ops-Approver", email="cat@dallas.gov", name="Cat")
 LEDGER_FIELDS = {"run_id", "command", "requested_by", "requester_name", "requester_role",
-                 "approved_by", "queued_at", "started_at", "finished_at", "outcome"}
+                 "approved_by", "queued_at", "started_at", "finished_at", "outcome",
+                 "run_kept"}  # run_kept: the Run itself hasn't been purged yet
 
 
 def reviewed(client, values=None):
@@ -29,6 +30,16 @@ def ledger(client, headers=VIEWER, **params):
     response = client.get("/api/ledger", params=params, headers=headers)
     assert response.status_code == 200, response.text
     return response.json()
+
+
+def purger(settings, clock):
+    """The same purge the service runs daily, on the test's clock."""
+    from pagerduty_ops_ui.retention import Purger
+    from pagerduty_ops_ui.store import RunStore
+
+    store = RunStore(settings.database_url, clock=clock,
+                     ledger_enabled=settings.ledger_enabled)
+    return Purger(store, settings, clock)
 
 
 def row_for(client, run_id):
@@ -119,10 +130,10 @@ def test_the_purge_removes_runs_older_than_90_days_but_never_the_ledger(client, 
     run = applied(client)
     dry_id = run["applied_from"]
     clock.advance(days=89)
-    assert client.app.state.purge_now() == 0
+    assert purger(settings, clock).purge_now() == 0
     assert client.get(f"/api/runs/{run['id']}", headers=VIEWER).status_code == 200
     clock.advance(days=1, seconds=1)
-    assert client.app.state.purge_now() >= 3  # the dry run, its fresh dry run and the apply
+    assert purger(settings, clock).purge_now() >= 3  # the dry run, its fresh dry run and the apply
     for run_id in (run["id"], dry_id, run["fresh_dry_run_id"]):
         assert client.get(f"/api/runs/{run_id}", headers=VIEWER).status_code == 404
         assert not (settings.run_root / run_id).exists()  # its stored files are gone too
@@ -135,13 +146,13 @@ def test_the_purge_leaves_younger_and_unfinished_runs(client, settings, clock):
     clock.advance(days=91)
     running = client.post("/api/runs", json={"command": "ui-fixture", "argv": ["--sleep", "5"]},
                           headers=VIEWER).json()
-    client.app.state.purge_now()
+    purger(settings, clock).purge_now()
     assert client.get(f"/api/runs/{old['id']}", headers=VIEWER).status_code == 404
     assert client.get(f"/api/runs/{running['id']}", headers=VIEWER).status_code == 200
 
 
 def test_the_service_purges_when_it_starts(settings, catalog, clock, monkeypatch):
-    from conftest import HERE, HeaderIdentity
+    from conftest import HERE, HeaderIdentity, wait_until
     from fastapi.testclient import TestClient
 
     from pagerduty_ops_ui.app import create_app
@@ -156,8 +167,10 @@ def test_the_service_purges_when_it_starts(settings, catalog, clock, monkeypatch
         old = finished(client, client.post("/api/runs", json={"command": "ui-fixture",
                                                               "argv": []}, headers=VIEWER))
     clock.advance(days=91)
-    with service() as client:
-        assert client.get(f"/api/runs/{old['id']}", headers=VIEWER).status_code == 404
+    with service() as client:  # in the background, so startup doesn't wait for it
+        assert client.get("/api/queue", headers=VIEWER).status_code == 200
+        wait_until(lambda: client.get(f"/api/runs/{old['id']}",
+                                      headers=VIEWER).status_code == 404)
 
 
 # ---------- the switch, while Records Management decides ----------
@@ -176,7 +189,7 @@ def test_with_the_ledger_switched_off_nothing_is_kept(settings, catalog, clock, 
         page = ledger(client)
         assert (page["enabled"], page["rows"]) == (False, [])
         clock.advance(days=91)
-        client.app.state.purge_now()
+        purger(settings, clock).purge_now()
         assert client.get(f"/api/runs/{run['id']}", headers=VIEWER).status_code == 404
 
 
@@ -200,3 +213,133 @@ def test_the_ledger_can_be_searched(client, settings):
     assert ([r["run_id"] for r in page["rows"]], page["total"]) == ([ok["id"]], 2)
     assert client.get("/api/ledger", params={"outcome": "exploded"},
                       headers=VIEWER).status_code == 422
+
+
+# ---------- from review: the rest of the outcomes ----------
+
+@pytest.mark.parametrize("code, outcome", [("3", "auth-error"), ("2", "usage-error")])
+def test_auth_and_usage_errors_leave_rows(client, settings, code, outcome):
+    dry = reviewed(client)
+    settings.extra_env["UI_FIXTURE_APPLY_EXIT"] = code
+    run = wait(client, client.post(f"/api/runs/{dry['id']}/apply", headers=OPERATOR).json()["id"])
+    assert row_for(client, run["id"])["outcome"] == outcome
+
+
+def test_a_timed_out_apply_leaves_a_row(client, settings):
+    dry = reviewed(client)
+    settings.run_timeout_seconds = 2
+    settings.extra_env["UI_FIXTURE_APPLY_SLEEP"] = "10"
+    run = wait(client, client.post(f"/api/runs/{dry['id']}/apply", headers=OPERATOR).json()["id"])
+    assert row_for(client, run["id"])["outcome"] == "stopped"
+
+
+def test_an_apply_cut_off_by_a_restart_leaves_a_row(settings, catalog, clock, monkeypatch):
+    from conftest import HERE, HeaderIdentity
+    from fastapi.testclient import TestClient
+
+    from pagerduty_ops_ui.app import create_app
+    from pagerduty_ops_ui.store import RunRecord, RunStore, now
+
+    monkeypatch.syspath_prepend(str(HERE))
+    RunStore(settings.database_url).save(RunRecord(  # as a crash leaves an executing apply
+        id="cut-off", command="ui-writer", argv=["-y"], kind="apply", status="running",
+        requested_by="ann@dallas.gov", requester_name="Ann", requester_role="operator",
+        queued_at=now(), started_at=now(), timeout_seconds=60))
+    app = create_app(settings, identity=HeaderIdentity(), catalog=catalog, clock=clock)
+    with TestClient(app, headers={"X-PD-Ops-Request": "1"}) as client:
+        assert row_for(client, "cut-off")["outcome"] == "stopped"
+
+
+# ---------- from review: the purge keeps linked Runs together ----------
+
+def test_a_dry_run_is_kept_while_a_younger_apply_refers_to_it(client, settings, clock):
+    dry = reviewed(client)
+    clock.advance(days=91)                        # the dry run is old; its apply is new
+    later = wait(client, client.post(f"/api/runs/{dry['id']}/apply",
+                                     headers=OPERATOR).json()["id"])
+    assert later["outcome"] == "succeeded"
+    purger(settings, clock).purge_now()
+    assert client.get(f"/api/runs/{dry['id']}", headers=VIEWER).status_code == 200
+    clock.advance(days=91)                        # now the whole group is old
+    purger(settings, clock).purge_now()
+    for run_id in (dry["id"], later["id"], later["fresh_dry_run_id"]):
+        assert client.get(f"/api/runs/{run_id}", headers=VIEWER).status_code == 404
+
+
+def test_a_dry_run_is_kept_while_its_apply_waits_in_the_queue(client, settings, clock):
+    first, second = reviewed(client), reviewed(client)
+    clock.advance(days=91)
+    settings.extra_env["UI_FIXTURE_APPLY_SLEEP"] = "3"
+    a = client.post(f"/api/runs/{first['id']}/apply", headers=OPERATOR).json()
+    b = client.post(f"/api/runs/{second['id']}/apply", headers=OPERATOR).json()
+    assert b["status"] == "queued"
+    purger(settings, clock).purge_now()           # runs while b waits for the slot
+    assert wait(client, b["id"])["outcome"] == "succeeded"
+    wait(client, a["id"])
+
+
+# ---------- from review: no orphaned folders ----------
+
+def test_an_orphaned_run_folder_is_swept(client, settings, clock):
+    import os
+    import time as _time
+
+    orphan = settings.run_root / "orphan-from-a-crash"
+    (orphan / "inputs").mkdir(parents=True)
+    (orphan / "inputs" / "data.csv").write_text("x")
+    fresh = settings.run_root / "being-created-now"
+    fresh.mkdir(parents=True)
+    old = _time.time() - 2 * 24 * 3600            # a folder left two days ago
+    os.utime(orphan, (old, old))
+    purger(settings, clock).purge_now()
+    assert not orphan.exists()
+    assert fresh.exists()  # a folder a Run is being created in right now is left alone
+
+
+def test_a_folder_that_cant_be_deleted_is_reported(client, settings, clock, monkeypatch,
+                                                   caplog):
+    import shutil
+
+    run = finished(client, client.post("/api/runs", json={"command": "ui-fixture",
+                                                          "argv": []}, headers=VIEWER))
+    clock.advance(days=91)
+
+    def locked(path, ignore_errors=False, onexc=None, onerror=None):
+        raise PermissionError("in use by another process")
+
+    monkeypatch.setattr(shutil, "rmtree", locked)
+    purger(settings, clock).purge_now()
+    assert run["id"] in caplog.text and "in use" in caplog.text
+
+
+# ---------- from review: the switch and the page ----------
+
+@pytest.mark.parametrize("value, enabled", [("off", False), ("false", False), ("0", False),
+                                            ("no", False), ("on", True), ("true", True),
+                                            ("1", True), ("yes", True), ("", True)])
+def test_the_ledger_switch_takes_the_usual_spellings(monkeypatch, value, enabled):
+    from pagerduty_ops_ui.settings import ledger_switch
+
+    monkeypatch.setenv("PD_UI_LEDGER", value)
+    assert ledger_switch() is enabled
+
+
+def test_an_unrecognised_ledger_switch_is_a_configuration_error(monkeypatch):
+    from pagerduty_ops_ui.settings import ledger_switch
+
+    monkeypatch.setenv("PD_UI_LEDGER", "sometimes")
+    with pytest.raises(SystemExit, match="PD_UI_LEDGER"):
+        ledger_switch()
+
+
+def test_a_purged_runs_row_says_so(client, settings, clock):
+    run = applied(client)
+    assert row_for(client, run["id"])["run_kept"] is True
+    clock.advance(days=91)
+    purger(settings, clock).purge_now()
+    assert row_for(client, run["id"])["run_kept"] is False
+
+
+def test_the_ledger_says_how_long_runs_are_kept(client, settings):
+    settings.retention_days = 30
+    assert client.get("/api/ledger", headers=VIEWER).json()["retention_days"] == 30

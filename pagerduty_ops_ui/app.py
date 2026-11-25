@@ -154,7 +154,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
     @asynccontextmanager
     async def lifespan(_app):
         executor.start()  # Stopped for what a restart cut off; the queue resumes
-        await run_in_threadpool(purger.start)  # the 90-day purge: now, then daily (#76)
+        purger.start()  # the purge, in the background: now, then daily (#76)
         try:
             yield
         finally:
@@ -162,7 +162,6 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             await run_in_threadpool(executor.stop)
 
     app = FastAPI(title="PagerDuty Ops", docs_url=None, redoc_url=None, lifespan=lifespan)
-    app.state.purge_now = purger.purge_now
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret,
                        https_only=True, same_site="lax", max_age=SESSION_MAX_AGE_SECONDS)
     if identity is None:
@@ -245,7 +244,8 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         return start_now(new_run(run_id, entry.name, argv,
                                  "dry-run" if verdict.writes else "report",
                                  Requester(admin.email, admin.name, role.label), inputs,
-                                 timeout_seconds=timeout_for(verdict), override=override),
+                                 at=clock(), timeout_seconds=timeout_for(verdict),
+                                 override=override),
                          inputs)
 
     def timeout_for(verdict) -> int:
@@ -333,7 +333,8 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             record = new_run(
                 apply_id, entry.name, apply_argv, "apply",
                 Requester(admin.email, admin.name, role.label), inputs,
-                timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id,
+                at=clock(), timeout_seconds=timeout_for(verdict), status=QUEUED,
+                applied_from=run_id,
                 override=CapOverride.of(dry_record))
             if verdict.irreversible:  # the approver is recorded on the apply too
                 for column, value in approval.columns().items():
@@ -456,7 +457,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             raise
         return start_now(new_run(fresh_id, entry.name, argv, "dry-run",
                                  Requester(admin.email, admin.name, role.label), inputs,
-                                 timeout_seconds=dry.timeout_seconds,
+                                 at=clock(), timeout_seconds=dry.timeout_seconds,
                                  override=CapOverride.of(dry)), inputs)
 
     @app.get("/api/queue")
@@ -470,13 +471,15 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                outcome: str | None = None, page: Annotated[int, Query(ge=1)] = 1,
                per_page: Annotated[int, Query(ge=1, le=MAX_HISTORY_PAGE)] = 50):
         """The permanent Ledger of Writing runs (#76), for every role, filtered like the
-        history. `enabled` is false while it is switched off (PD_UI_LEDGER=off)."""
+        history. `enabled` is false while it is switched off (PD_UI_LEDGER=off);
+        `retention_days` is how long the Runs themselves are kept."""
         if outcome is not None and outcome not in FINAL_OUTCOMES:
             raise HTTPException(422, f"outcome must be one of {sorted(FINAL_OUTCOMES)}.")
-        return store.ledger(command=command or None, requester=(requester or "").strip(),
+        rows = store.ledger(command=command or None, requester=(requester or "").strip(),
                             since=parse_instant("since", since),
                             before=parse_instant("before", before), outcome=outcome,
                             page=page, per_page=per_page)
+        return {**rows, "retention_days": settings.retention_days}
 
     @app.get("/api/runs")
     def run_history(who: SignedIn, command: str | None = None, requester: str | None = None,

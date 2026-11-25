@@ -264,10 +264,12 @@ export interface LedgerRow {
   started_at: string | null;
   finished_at: string | null;
   outcome: Outcome | null;
+  run_kept: boolean;  // false once the Run itself is purged: there is no page to link to
 }
 
 export interface LedgerPage {
   enabled: boolean;  // false while Records Management's decision keeps it off
+  retention_days: number;  // how long the Runs themselves are kept
   rows: LedgerRow[];
   total: number;
   page: number;

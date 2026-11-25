@@ -69,7 +69,23 @@ class Settings:
                 client_secret=need("PD_UI_OKTA_CLIENT_SECRET"),
                 redirect_uri=need("PD_UI_OKTA_REDIRECT_URI"),
             ),
-            ledger_enabled=os.environ.get("PD_UI_LEDGER", "on").strip().lower() != "off",
+            ledger_enabled=ledger_switch(),
             static_dir=Path(os.environ["PD_UI_STATIC_DIR"])
             if os.environ.get("PD_UI_STATIC_DIR") else None,
         )
+
+
+LEDGER_ON = ("on", "true", "1", "yes", "")
+LEDGER_OFF = ("off", "false", "0", "no")
+
+
+def ledger_switch() -> bool:
+    """PD_UI_LEDGER: on unless switched off. A value that is neither is a configuration error,
+    not a guess either way: the Ledger is a records decision (ADR 0013)."""
+    value = os.environ.get("PD_UI_LEDGER", "").strip().lower()
+    if value in LEDGER_ON:
+        return True
+    if value in LEDGER_OFF:
+        return False
+    raise SystemExit(f"PD_UI_LEDGER must be on or off (or true/false, 1/0, yes/no), not "
+                     f"{value!r}.")
