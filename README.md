@@ -117,7 +117,7 @@ PagerDuty's hosted MCP server (`.mcp.json` wires it up using `PD_API_TOKEN`) is 
 
 ## Team web UI (in progress)
 
-A web UI for the admin team is being built on top of these commands. It signs admins in with Okta, runs commands as their own processes, and keeps every Run. Phase 1 runs read-only commands only. See [docs/ui.md](docs/ui.md), and [CONTEXT.md](CONTEXT.md) and `docs/adr/` for the design.
+A web UI for the admin team is being built on top of these commands. It signs admins in with Okta, runs commands as their own processes, and keeps every Run. Phase 1 runs read-only commands only. See [docs/ui.md](docs/ui.md), [docs/install-windows.md](docs/install-windows.md) for installing it on Windows Server, and [CONTEXT.md](CONTEXT.md) and `docs/adr/` for the design.
 
 ## Development
 
