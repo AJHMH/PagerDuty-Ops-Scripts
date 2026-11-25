@@ -15,8 +15,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
+from urllib.parse import urlsplit
 
-from . import phase
+from . import notify, phase
 
 # Environment variables that are secrets: passed to Runs, redacted from everything stored.
 SECRET_ENV_NAMES = (
@@ -65,6 +66,12 @@ class Settings:
     # unless Records Management declines it (PD_UI_LEDGER=off), when it is purged too.
     retention_days: int = 90
     ledger_enabled: bool = True
+    # #78: the Teams Workflows webhook Approvals are announced to. A secret: kept out of
+    # repr(), never passed to a Run. Unset, nothing is posted.
+    teams_webhook_url: str | None = field(default=None, repr=False)
+    # Where the service is reached, for links in those messages: the origin of the Okta
+    # redirect URI (e.g. https://pd-ops.dallas.gov).
+    public_url: str | None = None
 
     def __post_init__(self):
         self.run_root = Path(self.run_root)
@@ -103,7 +110,26 @@ class Settings:
             static_dir=Path(os.environ["PD_UI_STATIC_DIR"])
             if os.environ.get("PD_UI_STATIC_DIR") else None,
             max_phase=phase.parse(os.environ.get(phase.ENV_NAME)),
+            teams_webhook_url=teams_webhook(),
+            public_url=origin(need("PD_UI_OKTA_REDIRECT_URI")),
         )
+
+
+def teams_webhook() -> str | None:
+    """PD_UI_TEAMS_WEBHOOK_URL, if set: an https URL. Never repeated in an error, since the
+    URL itself is the secret."""
+    value = os.environ.get(notify.ENV_NAME, "").strip()
+    if not value:
+        return None
+    if urlsplit(value).scheme != "https" or not urlsplit(value).netloc:
+        raise SystemExit(f"{notify.ENV_NAME} must be an https URL (the Teams Workflows "
+                         "webhook).")
+    return value
+
+
+def origin(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 LEDGER_ON = ("on", "true", "1", "yes", "")

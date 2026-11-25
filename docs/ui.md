@@ -148,7 +148,14 @@ Applying an Irreversible operation needs a second admin's Approval. Whether an a
 
 A rejection is final for that dry run: the requester runs a new dry run and asks again. If the fresh dry run at apply time differs from the approved one, nothing is applied (`changed`), and the dry run's Approval is `withdrawn`, so it can't be applied again on that Approval; the fresh dry run is a new dry run, so it needs its own review and Approval. An apply shows the Approval it was made with as `used`. An Approval that expires while its apply waits in the queue isn't used: the apply is recorded as failed, saying so.
 
-`GET /api/approvals` lists requests waiting for an Approver, oldest first; the home page shows them as "Waiting for approval". The approver is recorded on the apply and in its Ledger row (below). Teams notifications for requests are #78.
+`GET /api/approvals` lists requests waiting for an Approver, oldest first; the home page shows them as "Waiting for approval". The approver is recorded on the apply and in its Ledger row (below).
+
+**Teams notifications (#78).** With `PD_UI_TEAMS_WEBHOOK_URL` set, the service posts to the admin team's channel through a Teams **Workflows** webhook ("Post to a channel when a webhook request is received"), as an Adaptive Card linking to the Run (`<origin of PD_UI_OKTA_REDIRECT_URI>/#/runs/<id>`):
+- **Approval requested:** the command, the requester, the dry run's change counts and when the request expires.
+- **Approved** (by whom, and until when) or **Rejected** (by whom).
+- **Approval request expired** (nobody answered) or **Approval expired unused** (approved, never applied). A sweep once a minute finds these. Each is announced once, recorded in the dry run's `approval_expiry_announced_at`, and announced afresh if the requester asks again.
+
+A message carries no arguments, inputs, diff lines or comments. The webhook URL is a secret: it comes from the vault, is never passed to a Run, and is never logged or stored (a failure logs only the HTTP status or the error's type). Messages are sent in the background. A failed post (a network error, 429 or 5xx) is retried after 5, 30 and 120 seconds and then logged; any other 4xx is logged without retrying. Either way, the Approval itself is never blocked or failed. Messages still queued when the service stops are dropped, with a warning. Without the variable, nothing is posted.
 
 ## The Ledger and the 90-day purge (#76, ADR 0013)
 
@@ -206,6 +213,7 @@ A Run receives them only as environment variables. Apart from them, it gets a sh
 | `PD_UI_STATIC_DIR` | The built front end (`ui/dist`) |
 | `PD_UI_PORT` | Port on 127.0.0.1 (default 8080). IIS proxies to it |
 | `PD_UI_MAX_PHASE` | Rollout phase this server is approved for: `1` read only (default), `2` applies that can be undone, `3` everything ([above](#rollout-phase-pd_ui_max_phase-adr-0016)) |
+| `PD_UI_TEAMS_WEBHOOK_URL` | The Teams Workflows webhook Approvals are announced to (#78). A secret, from the vault; must be `https`. Unset: no messages |
 | `PD_UI_LEDGER` | `off` (or `false`, `0`, `no`) switches the permanent Ledger off, if Records Management declines it (ADR 0013); `on` (or `true`, `1`, `yes`, or unset) keeps it on. Anything else stops the service with a configuration error |
 | `PD_API_TOKEN`, `SN_CLIENT_ID`, `SN_CLIENT_SECRET`, `SN_USER`, `SN_PASSWORD`, `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET` | Engine secrets, passed through to Runs and redacted from stored output |
 | `PD_FROM_EMAIL`, `SN_INSTANCE`, `SN_PROD_INSTANCES`, `SN_REHEARSAL_INSTANCES`, `SN_AUTH_METHOD`, `SN_FIELD_MAP`, `SN_RECEIPT_MAX_AGE_DAYS`, `OKTA_DOMAIN`, `OKTA_AUTH_SERVER_ID`, `OKTA_SCOPE` | Non-secret engine settings, passed through to Runs ([servicenow.md](servicenow.md)). No other engine variable reaches a Run |
@@ -260,4 +268,4 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 
 These are later tickets:
 - the Windows host packaging (#71);
-- the rest of Phase 3: Teams notifications for Approval requests (#78), ServiceNow production applies with shared receipts (#79), and scheduled read-only Runs (#80).
+- the rest of Phase 3: scheduled read-only Runs (#80).

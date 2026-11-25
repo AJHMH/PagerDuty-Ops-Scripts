@@ -37,6 +37,7 @@ from .executor import (
 from .forms import BadValues, build_argv, form_for
 from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
+from .notify import TeamsNotifier
 from .overrides import (
     MAX_REASON_LENGTH,
     CapOverride,
@@ -151,18 +152,22 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                      ledger_enabled=settings.ledger_enabled)
     executor = Executor(store, settings, catalog, clock=clock)
     purger = Purger(store, settings, clock)
+    notifier = TeamsNotifier(settings.teams_webhook_url, store, base_url=settings.public_url)
 
     @asynccontextmanager
     async def lifespan(_app):
         executor.start()  # Stopped for what a restart cut off; the queue resumes
         purger.start()  # the purge, in the background: now, then daily (#76)
+        notifier.start()  # Approval messages to Teams, and the expiry sweep (#78)
         try:
             yield
         finally:
+            await run_in_threadpool(notifier.stop)
             await run_in_threadpool(purger.stop)
             await run_in_threadpool(executor.stop)
 
     app = FastAPI(title="PagerDuty Ops", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app.state.notifier = notifier  # tests drive the expiry sweep directly
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret,
                        https_only=True, same_site="lax", max_age=SESSION_MAX_AGE_SECONDS)
     if identity is None:
@@ -381,8 +386,11 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                                      "doesn't count it as an Irreversible operation.")
         now = clock()
         store.update(run_id, **Approval(AWAITING, tuple(verdict.reasons), now,
-                                        now + APPROVAL_LIFETIME).columns())
-        return store.get(run_id)
+                                        now + APPROVAL_LIFETIME).columns(),
+                     approval_expiry_announced_at=None)  # a new request expires afresh
+        asked = store.get(run_id)
+        notifier.approval_event(AWAITING, asked)  # in the background; never fails this
+        return asked
 
     def record_decision(run_id: str, who, body: Decision, decision: str) -> dict:
         admin, role = who
@@ -400,7 +408,9 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
             raise HTTPException(409, "This Run isn't waiting for an Approval: it may have been "
                                      "decided already or expired (the requester can ask "
                                      "again).")
-        return store.get(run_id)
+        decided = store.get(run_id)
+        notifier.approval_event(decision, decided)  # in the background; never fails this
+        return decided
 
     @app.post("/api/runs/{run_id}/approval/approve")
     def approve(run_id: str, body: Decision, who: SignedIn):

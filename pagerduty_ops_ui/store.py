@@ -133,6 +133,10 @@ class RunRecord(Base):
     approval_decided_by: Mapped[str | None] = mapped_column(Unicode(320))
     approval_decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     approval_comment: Mapped[str | None] = mapped_column(Unicode(MAX_REASON_LENGTH))
+    # When the Teams channel was told this request or Approval expired (#78), so it is told
+    # once; cleared when the requester asks again.
+    approval_expiry_announced_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True))
     # An apply records the reviewed dry run it came from, and the fresh dry run that was
     # compared with it inside the writing slot (ADR 0011).
     applied_from: Mapped[str | None] = mapped_column(Unicode(36))
@@ -551,6 +555,41 @@ class RunStore:
                             .where(RunRecord.id == run_id,
                                    RunRecord.approval_status == APPROVED)
                             .values(approval_status=WITHDRAWN))
+
+    def _expired_unannounced(self, now: datetime):
+        """Requests nobody answered, and Approvals never used, that are past their expiry
+        and not yet announced (#78)."""
+        return (RunRecord.kind == "dry-run", RunRecord.applied_run_id.is_(None),
+                RunRecord.approval_status.in_((AWAITING, APPROVED)),
+                RunRecord.approval_expires_at <= now.astimezone(timezone.utc),
+                RunRecord.approval_expiry_announced_at.is_(None))
+
+    @retries_deadlocks
+    def expired_approvals_to_announce(self) -> list[str]:
+        """The dry runs whose request or Approval has expired and not been announced."""
+        with Session(self.engine) as session:
+            return list(session.scalars(
+                select(RunRecord.id).where(*self._expired_unannounced(self.clock()))
+                .order_by(RunRecord.approval_expires_at, RunRecord.id)))
+
+    def claim_expiry_announcement(self, run_id: str) -> dict | None:
+        """Atomically mark one expiry as announced, and return the dry run as it was when
+        claimed: read in the same transaction, while the update holds the row, so a request
+        renewed a moment later can't be announced as the one that expired. None if it was
+        announced already (by another sweep), was asked for again, or isn't expired."""
+        now = self.clock()
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(
+                update(RunRecord)
+                .where(RunRecord.id == run_id, *self._expired_unannounced(now))
+                .values(approval_expiry_announced_at=now))
+            if result.rowcount != 1:
+                return None
+            run = session.scalar(select(RunRecord).where(RunRecord.id == run_id)
+                                 .execution_options(populate_existing=True))
+            files = session.scalars(select(RunFile).where(RunFile.run_id == run_id)
+                                    .order_by(RunFile.id)).all()
+            return to_dict(run, list(files), now)
 
     @retries_deadlocks
     def awaiting_approval(self) -> list[dict]:

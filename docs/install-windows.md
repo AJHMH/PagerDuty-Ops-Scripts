@@ -58,10 +58,11 @@ other.
 | DNS | An internal record, e.g. `pd-ops-dev.dallas.gov`, pointing at the VM | The host name |
 | PKI | A server certificate for that host name, as a `.pfx` with its private key, from the City CA | `.pfx` and its password, through the vault or a secure share |
 | DBA | A SQL Server database (`PDOps`) on a City-managed instance, with the logins described in [section 5](#5-database), and backups under the DBAs' normal retention | Server/instance name, database name |
-| Network / firewall | **Inbound** TCP 443 to the VM from City networks only. **Outbound** direct HTTPS (TCP 443, no proxy) from the VM to `api.pagerduty.com`, `dallastx.service-now.com`, `dallastx-test.service-now.com`, `dallastx-dev.service-now.com` and the City's Okta domain (ADR 0008). Plus whatever the vault needs. | Change ticket numbers |
+| Network / firewall | **Inbound** TCP 443 to the VM from City networks only. **Outbound** direct HTTPS (TCP 443, no proxy) from the VM to `api.pagerduty.com`, `dallastx.service-now.com`, `dallastx-test.service-now.com`, `dallastx-dev.service-now.com` and the City's Okta domain (ADR 0008). For Phase 3, also the host in the Teams Workflows webhook URL. Plus whatever the vault needs. | Change ticket numbers |
 | Vault team | Secret entries for the values in [section 7](#7-secrets-and-the-start-script), readable **only** by the service account, and the supported way for a Windows service to read them (CLI, REST API with Windows auth, Credential Provider, managed identity, …) | The retrieval method and secret paths |
 | PagerDuty admins | A scoped account API key for the service (ADR 0006). For Phase 1 it **must be read-only**: that key is what keeps Phase 1 read only (see the note at the top). | Stored in the vault |
 | Security | Book the City security review before Phase 1 goes live (ADR 0015) | Date |
+| Teams (admin team channel owner) | For Phase 3 only: a **Workflows** webhook in the admin team's channel, so the service can announce Approval requests (#78). In Teams: the channel's **Workflows** → "Post to a channel when a webhook request is received". Not the retired Office 365 "Incoming Webhook" connector. | The webhook URL, straight into the vault: it is a secret |
 
 Note the software you will copy to the server. It probably can't reach the internet, because
 outbound access is limited to the hosts above:
@@ -275,6 +276,7 @@ the login was refused; 2 means it couldn't connect.
 | `PD_UI_OKTA_CLIENT_SECRET` | The sign-in app's client secret | Used by the service only; never passed to Runs |
 | `PD_API_TOKEN` | The PagerDuty account API key (ADR 0006) | Must be a read-only key for Phase 1; replace it with a full-access key only after the security review approves writes |
 | `OKTA_CLIENT_SECRET` | The `pd-sn-sync` client-credentials app secret | Only if ServiceNow commands are used |
+| `PD_UI_TEAMS_WEBHOOK_URL` | The Teams Workflows webhook URL for Approval messages (#78) | Phase 3 only. The URL itself is the secret: its signature lets anyone post to the channel. Used by the service only; never passed to Runs |
 | `SN_CLIENT_SECRET` / `SN_PASSWORD` | Only for the fallback `SN_AUTH_METHOD` values | Usually not needed |
 
 The vault grants read access to these entries to the service account only.
@@ -312,6 +314,7 @@ $secrets = [ordered]@{
     PD_UI_OKTA_CLIENT_SECRET = '<vault path>/pd-ops/<env>/okta-signin-client-secret'
     PD_API_TOKEN             = '<vault path>/pd-ops/<env>/pagerduty-api-key'
     OKTA_CLIENT_SECRET       = '<vault path>/pd-ops/<env>/okta-sn-sync-client-secret'
+    PD_UI_TEAMS_WEBHOOK_URL  = '<vault path>/pd-ops/<env>/teams-approvals-webhook'
 }
 
 foreach ($name in $secrets.Keys) {
@@ -552,7 +555,7 @@ Port 8080 needs no rule, because it listens on localhost only.
 netsh winhttp show proxy           # expect: Direct access (no proxy server).
 Get-ChildItem Env: | Where-Object Name -match 'proxy'   # expect: nothing
 'api.pagerduty.com','dallastx.service-now.com','dallastx-test.service-now.com',
-'dallastx-dev.service-now.com','<org>.okta.com' | ForEach-Object {
+'dallastx-dev.service-now.com','<org>.okta.com' <# ,'<Teams webhook host>' at Phase 3 #> | ForEach-Object {
     $r = Test-NetConnection $_ -Port 443 -WarningAction SilentlyContinue
     '{0,-34} {1}' -f $_, $(if ($r.TcpTestSucceeded) { 'OK' } else { 'BLOCKED' })
 }
@@ -583,6 +586,7 @@ Do all of these on DEV and TEST, and attach the results to the security review.
 | 8 | As a Viewer, try to dry-run a writing command (e.g. Apply tags) | Refused (403); Operators and Approvers can dry-run it |
 | 8a | Confirm the PagerDuty key in the vault is read-only, and the ServiceNow integration user has no write ACLs (Phase 1) | Confirmed by the PagerDuty and ServiceNow admins |
 | 8b | At Phase 1, open `https://<host>/api/me`, then as an Operator review a dry run of a writing command | `max_phase` is `1`; the Run page says the service is read only and offers no Apply |
+| 8c | At Phase 3, with `PD_UI_TEAMS_WEBHOOK_URL` set: ask for an Approval of a dry run of an Irreversible operation (on DEV), then have another admin reject it | The admin team's channel gets "Approval requested: …" with a working link to the Run, then "Rejected: …" |
 | 9 | Run history shows the Run after `Restart-Service pd-ui` | Still listed; anything that was executing shows Stopped |
 | 10 | Stop the service while a long read-only Run executes, then `Get-Process python` | No Run processes left; the Run shows Stopped |
 | 11 | Secrets aren't on disk (below) | No matches |
@@ -696,6 +700,7 @@ vault through the start script; everything else is set in `pd-ui.xml`.
 | `PD_UI_OKTA_ISSUER` | yes | no | Okta authorization server issuer URL |
 | `PD_UI_OKTA_CLIENT_ID` | yes | no | Sign-in app client ID |
 | `PD_UI_OKTA_CLIENT_SECRET` | yes | **yes** | Sign-in app client secret |
+| `PD_UI_TEAMS_WEBHOOK_URL` | no | **yes** | Teams Workflows webhook for Approval messages (#78). Must be `https`. Unset: no messages |
 | `PD_UI_OKTA_REDIRECT_URI` | yes | no | `https://<host>/auth/callback` |
 | `PD_UI_STATIC_DIR` | yes in practice | no | `C:\pd-ops\current\static` |
 | `PD_UI_PORT` | no | no | Port on 127.0.0.1; default 8080 |
