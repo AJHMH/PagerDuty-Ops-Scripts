@@ -34,7 +34,8 @@ ENGINE_ENV_NAMES = (
 # Engine configuration the service sets for every Run itself (pagerduty_ops/receipts.py).
 RECEIPTS_ENV = "PD_OPS_RECEIPTS_DIR"
 SERVICE_ENV_NAMES = (RECEIPTS_ENV,)
-# Where receipts go when the service's environment doesn't name a directory.
+# Where receipts go when the service's environment doesn't name a directory: a folder next to
+# the Run root, never inside it, since the purge sweeps folders there that no Run owns (ADR 0013).
 DEFAULT_RECEIPTS_SUBDIR = "receipts"
 
 
@@ -53,7 +54,7 @@ class Settings:
     session_secret: str
     secret_env: dict[str, str] = field(default_factory=dict)
     extra_env: dict[str, str] = field(default_factory=dict)
-    receipts_dir: Path | None = None  # default <run_root>/receipts
+    receipts_dir: Path | None = None  # default: "receipts" next to the Run root
     okta: OktaSettings | None = None
     static_dir: Path | None = None
     run_timeout_seconds: int = 2 * 3600  # ADR 0012; a command's declaration may extend it
@@ -66,9 +67,14 @@ class Settings:
     ledger_enabled: bool = True
 
     def __post_init__(self):
+        self.run_root = Path(self.run_root)
+        runs = Path(os.path.abspath(self.run_root))
         # Absolute, so it names the same directory whichever Run directory is the cwd.
         self.receipts_dir = Path(os.path.abspath(
-            self.receipts_dir or self.run_root / DEFAULT_RECEIPTS_SUBDIR))
+            self.receipts_dir or runs.parent / DEFAULT_RECEIPTS_SUBDIR))
+        if self.receipts_dir == runs or runs in self.receipts_dir.parents:
+            raise SystemExit(f"{RECEIPTS_ENV} ({self.receipts_dir}) must not be inside "
+                             f"PD_UI_RUN_ROOT ({runs}): the purge would delete the receipts.")
         self.extra_env[RECEIPTS_ENV] = str(self.receipts_dir)
 
     @classmethod

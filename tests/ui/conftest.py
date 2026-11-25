@@ -170,6 +170,17 @@ def settings(tmp_path, database_url):
     )
 
 
+@pytest.fixture
+def sn_instances(settings, monkeypatch):
+    """ServiceNow production and rehearsal instances, as a server would configure them: in
+    the service's environment (assess() judges a Run in-process) and passed to its Runs."""
+    instances = {"SN_PROD_INSTANCES": "dallastx", "SN_REHEARSAL_INSTANCES": "dallastx-test"}
+    for name, value in instances.items():
+        monkeypatch.setenv(name, value)
+    settings.extra_env.update(instances)
+    return instances
+
+
 class FakeClock:
     """The service's clock in tests: real time, plus however far a test moves it on."""
 

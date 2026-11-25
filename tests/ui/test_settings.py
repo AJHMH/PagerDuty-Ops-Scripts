@@ -7,8 +7,10 @@ variable the engine's ServiceNow configuration, auth and rehearsal-receipt code 
 checks each one is passed through (or, for the receipts directory, set by the service).
 """
 
+import os
 import subprocess
 import sys
+import time
 import types
 from pathlib import Path
 
@@ -130,15 +132,16 @@ def test_settings_from_env_hand_the_servicenow_settings_to_a_run(monkeypatch):
 
 # ---------- one shared receipts directory (ADR 0007) ----------
 
-def test_runs_get_an_absolute_receipts_directory_under_the_run_root_by_default(monkeypatch,
-                                                                               tmp_path):
+def test_runs_get_an_absolute_receipts_directory_next_to_the_run_root_by_default(monkeypatch,
+                                                                                 tmp_path):
     monkeypatch.chdir(tmp_path)
     service_env(monkeypatch)  # PD_UI_RUN_ROOT=runs, relative to the service's directory
 
     env = child_env(ui_settings.Settings.from_env().extra_env, {})
 
     # Absolute: each Run's cwd is its own directory, so a relative path would differ per Run.
-    assert env["PD_OPS_RECEIPTS_DIR"] == str(tmp_path / "runs" / "receipts")
+    # Next to the Run root, not in it: the purge sweeps folders there that no Run owns.
+    assert env["PD_OPS_RECEIPTS_DIR"] == str(tmp_path / "receipts")
 
 
 def test_the_service_environment_can_name_the_receipts_directory(monkeypatch, tmp_path):
@@ -153,11 +156,52 @@ def test_the_service_environment_can_name_the_receipts_directory(monkeypatch, tm
 def test_settings_built_directly_also_set_the_receipts_directory(tmp_path):
     built = ui_settings.Settings(database_url="sqlite://", run_root=tmp_path / "runs",
                                  session_secret="s")
-    assert built.extra_env["PD_OPS_RECEIPTS_DIR"] == str(tmp_path / "runs" / "receipts")
+    assert built.extra_env["PD_OPS_RECEIPTS_DIR"] == str(tmp_path / "receipts")
+
+
+def test_a_run_root_given_as_text_works_too(monkeypatch, tmp_path):
+    monkeypatch.chdir(tmp_path)
+    built = ui_settings.Settings(database_url="sqlite://", run_root="runs", session_secret="s")
+    assert (built.run_root, built.receipts_dir) == (Path("runs"), tmp_path / "receipts")
+
+
+@pytest.mark.parametrize("inside", ["runs", "runs/receipts", "runs/a/b"])
+def test_a_receipts_directory_inside_the_run_root_stops_the_service(monkeypatch, tmp_path,
+                                                                    inside):
+    monkeypatch.chdir(tmp_path)
+    service_env(monkeypatch, PD_OPS_RECEIPTS_DIR=inside)
+    with pytest.raises(SystemExit, match="must not be inside PD_UI_RUN_ROOT"):
+        ui_settings.Settings.from_env()
+
+
+def test_the_purge_keeps_the_receipts(tmp_path):
+    # The regression: under the Run root, a day-old receipts folder was swept as an orphan.
+    from datetime import datetime, timezone
+
+    from pagerduty_ops_ui.migrate import upgrade
+    from pagerduty_ops_ui.retention import ORPHAN_AGE_SECONDS, Purger
+    from pagerduty_ops_ui.store import RunStore
+
+    built = ui_settings.Settings(database_url=f"sqlite:///{tmp_path / 'runs.db'}",
+                                 run_root=tmp_path / "runs", session_secret="s")
+    built.run_root.mkdir()
+    built.receipts_dir.mkdir()
+    receipt = built.receipts_dir / f"{'ab' * 32}.json"
+    receipt.write_text("{}", encoding="utf-8")
+    old = time.time() - 2 * ORPHAN_AGE_SECONDS
+    os.utime(built.receipts_dir, (old, old))
+    upgrade(built.database_url)
+
+    def clock():
+        return datetime.now(timezone.utc)
+
+    Purger(RunStore(built.database_url, clock=clock), built, clock).purge_now()
+    assert receipt.exists()
 
 
 ENGINE_RECEIPT = """
 import sys
+import time
 from pagerduty_ops import receipts
 directory = receipts.receipts_dir()
 if sys.argv[1] == "rehearse":

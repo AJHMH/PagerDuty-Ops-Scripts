@@ -106,13 +106,14 @@ C:\pd-ops\
     logs\
 D:\pd-ops-data\
   runs\                 PD_UI_RUN_ROOT: each Run's input and output files (ADR 0007)
-    receipts\           the shared rehearsal receipts (PD_OPS_RECEIPTS_DIR), made on first use
+  receipts\             the shared rehearsal receipts (PD_OPS_RECEIPTS_DIR), made on first use
 ```
 
 Put the Run files on the data disk, not `C:`. They are kept for 90 days (ADR 0013). If there
-is no `D:`, use `C:\pd-ops-data`. `runs\receipts\` is not a Run: a production
-`pd-sn-sync` apply needs the receipt its rehearsal Run wrote there, so don't clean it up with
-the Run folders.
+is no `D:`, use `C:\pd-ops-data`. `receipts\` sits next to `runs\`, not inside it: the
+purge deletes folders under `runs\` that no Run owns, and the service refuses to start if the
+receipts folder is inside `PD_UI_RUN_ROOT`. A production `pd-sn-sync` apply needs the receipt
+its rehearsal Run wrote there, so don't clean it up with the Run folders.
 
 ---
 
@@ -716,4 +717,4 @@ Run's process:
 
 | Variable | Secret | Meaning |
 |---|---|---|
-| `PD_OPS_RECEIPTS_DIR` | no | The shared rehearsal receipts folder, so a production `pd-sn-sync` Run finds the receipt its rehearsal Run wrote. Default `<PD_UI_RUN_ROOT>\receipts` (`D:\pd-ops-data\runs\receipts`); set it in `pd-ui.xml` only to put receipts elsewhere. The service makes it absolute, and refuses `--receipts-dir` on a Run ([ui.md](ui.md#rehearsal-receipts)) |
+| `PD_OPS_RECEIPTS_DIR` | no | The shared rehearsal receipts folder, so a production `pd-sn-sync` Run finds the receipt its rehearsal Run wrote. Default `receipts` next to `PD_UI_RUN_ROOT` (`D:\pd-ops-data\receipts`); set it in `pd-ui.xml` only to put receipts elsewhere, never inside `PD_UI_RUN_ROOT` (the service refuses to start). The service makes it absolute, and refuses `--receipts-dir` on a Run ([ui.md](ui.md#rehearsal-receipts)) |
