@@ -5,7 +5,39 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-11-25
+
+There is no 1.1.0 release: a `v1.1.0` tag from April points at a commit whose version was
+still 1.0.0, so the release workflow refused it.
+
 ### Added
+- **Team web UI** (`pagerduty_ops_ui` service, `ui/` front end; install with
+  `pip install -e ".[ui]"`). It is a thin layer over the CLI: each Run is the command's own
+  process, and what may run comes from the engine (ADRs 0001–0016, `docs/ui.md`).
+  - Okta sign-in with Viewer, Operator and Approver roles (#86).
+  - Generated forms for every command, with file uploads and downloads (#87).
+  - A live Run log (#94) and a searchable Run history (#95).
+  - Dry runs of writing commands with a review of the diff (#88). An apply comes from a
+    reviewed dry run, and is refused if a fresh dry run no longer matches it (#89).
+  - One writing Run at a time, with timeouts and cancel (#92).
+  - Raising a write cap needs a recorded reason (#96).
+  - Approvals for Irreversible operations (#97), announced in Teams through a Workflows
+    webhook (`PD_UI_TEAMS_WEBHOOK_URL`) (#106).
+  - A permanent Ledger of Writing runs, and a 90-day Run purge (#98).
+  - `PD_UI_MAX_PHASE` caps each server's rollout phase, read only by default (#100).
+  - ServiceNow `pd-sn-sync` Runs, with one shared rehearsal receipts store so a production
+    apply finds its rehearsal's receipt (#99, #101).
+  - Scheduled read-only Runs in Central time, with Teams notifications when a scheduled
+    `pd-validate` finds Drift (#107).
+  - Runs are stored in SQL Server, with the schema managed by Alembic migrations
+    (`pd-ui-migrate`) (#93). Reads that lose a SQL Server deadlock are retried (#105).
+  - A Windows Server installation guide (`docs/install-windows.md`) (#103, #104).
+- Every command declares its risk (`RISK`), and `pagerduty_ops.risk.assess()` says whether a
+  command line writes, is a dry run, or is an Irreversible operation (#83).
+- `pd-remove-team-members --user-ids`: a non-interactive mode for scripted use (#85).
+- `pd-validate` declares what Drift looks like (`DRIFT_EXIT_CODE`, `DRIFT_SUMMARY`), for
+  Scheduled runs (#107).
+- `CONTEXT.md` glossary and architecture decision records in `docs/adr/` (#81).
 - `pd-sn-sync` (report / plan / apply): reconciles PagerDuty IDs stored on ServiceNow
   `sys_user_group` and `sys_user` records, with PagerDuty as the source of truth. Groups are
   anchored on their service ID. Ambiguous matches are reported, never written. Stale IDs are
@@ -72,6 +104,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 - Dependency: PyYAML.
 - Shared plan-file format (`pagerduty_ops/plan.py`) and a cached account snapshot
   (`pagerduty_ops/pdstate.py`).
+
+### Changed
+- CI also runs the unit suite on Windows, the UI service tests on SQL Server, and the
+  front-end build. Command output is byte-identical on Windows (#84, #93).
 
 ### Fixed
 - Bulk CSV commands no longer silently skip incomplete rows. Previously, a row missing a
