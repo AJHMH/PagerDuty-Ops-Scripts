@@ -57,7 +57,8 @@ def catalog():
     # Real engine parsers and risk declarations with harmless mains (#77).
     for name, module in (("ui-reorg", "reorg"), ("ui-business-services", "business_services"),
                          ("ui-scim", "scim_user_sync"), ("ui-event-rules", "event_rules_migrate"),
-                         ("ui-sn-sync", "sn_sync"), ("ui-templates", "templates")):
+                         ("ui-sn-sync", "sn_sync"), ("ui-templates", "templates"),
+                         ("ui-validate", "validate")):
         entries[name] = CommandEntry(name, f"fixture_real_{module}", "main", "build_parser")
     return entries
 

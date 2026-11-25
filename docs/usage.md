@@ -113,6 +113,8 @@ pd-validate --config validate.json --plan-out fixes.json      # remediation plan
 pd-validate --servicenow --instance dallastx                  # + ServiceNow checks 9/10
 ```
 
+The team web UI can run it on a schedule. A Scheduled run that exits 1 after its `Findings: …` line found Drift, and the Teams channel is told ([ui.md](ui.md#scheduled-runs-80-adr-0014)).
+
 | # | Check id | Default severity | Finds | Remediation plan |
 |---|---|---|---|---|
 | 1 | `user_not_on_owning_team` | warning | user on a team's schedule/EP but not on that team | `add_member` (single owning team) |

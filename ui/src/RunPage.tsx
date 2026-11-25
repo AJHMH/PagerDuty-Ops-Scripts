@@ -302,8 +302,11 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
   const unfinished = shown && run.status !== "finished";
   const approvalOpen = shown && run.kind === "dry-run"
     && (run.approval?.status === "awaiting-approval" || run.approval?.status === "approved");
+  // A finished Scheduled run's Drift is decided on the scheduler's next tick (#80).
+  const driftPending = shown && run.schedule_id !== null && run.status === "finished"
+    && run.drift === null;
   useEffect(() => {
-    if (!unfinished && !approvalOpen) return;
+    if (!unfinished && !approvalOpen && !driftPending) return;
     let current = true;
     const timer = window.setTimeout(() => {
       getRun(id)
@@ -311,7 +314,7 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
         .catch((e: Error) => { if (current) setError(e.message); });
     }, unfinished ? POLL_MS : APPROVAL_POLL_MS);
     return () => { current = false; window.clearTimeout(timer); };
-  }, [id, unfinished, approvalOpen, run]);
+  }, [id, unfinished, approvalOpen, driftPending, run]);
 
   if (error) return <p className="error" role="alert">{error}</p>;
   if (!run) return <p>Loading…</p>;
@@ -347,6 +350,16 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
       <RunControls key={`controls-${run.id}`} run={run} me={me} onChange={setRun} />
       <dl>
         <dt>Requested by</dt><dd>{run.requester_name} ({run.requested_by}, {run.requester_role})</dd>
+        {run.schedule_id && (
+          <><dt>Scheduled</dt><dd>
+            {run.schedule_name
+              ? <>by the schedule <a href="#/schedules">“{run.schedule_name}”</a></>
+              : "by a schedule that has since been deleted"}
+          </dd></>
+        )}
+        {run.schedule_id && run.drift !== null && (
+          <><dt>Drift</dt><dd>{run.drift ? `Found. ${run.drift_summary ?? ""}` : "None found"}</dd></>
+        )}
         <dt>Requested</dt><dd>{new Date(run.queued_at).toLocaleString()}</dd>
         <dt>Started</dt><dd>{run.started_at ? new Date(run.started_at).toLocaleString() : "—"}</dd>
         {run.cancelled_by && <><dt>Cancelled by</dt><dd>{run.cancelled_by}</dd></>}

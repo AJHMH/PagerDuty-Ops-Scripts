@@ -37,6 +37,7 @@ ui = [
     "python-multipart>=0.0.18",
     "alembic>=1.13.0",
     "pyodbc>=5.1.0",   # SQL Server (ADR 0007), through Microsoft's ODBC Driver 18
+    "tzdata>=2024.1",  # Scheduled runs keep Central time (#80); Windows has no tz database
 ]
 
 [project.scripts]

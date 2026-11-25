@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from sqlalchemy import (
     JSON,
     BigInteger,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -17,6 +18,7 @@ from sqlalchemy import (
     UnicodeText,
     create_engine,
     delete,
+    false,
     func,
     or_,
     select,
@@ -141,6 +143,39 @@ class RunRecord(Base):
     # compared with it inside the writing slot (ADR 0011).
     applied_from: Mapped[str | None] = mapped_column(Unicode(36))
     fresh_dry_run_id: Mapped[str | None] = mapped_column(Unicode(36))
+    # A Scheduled run (#80, ADR 0014) records the schedule that started it; requested_by is
+    # the schedule's creator. Once it has finished, `drift` says whether it found Drift (by
+    # the command's own declaration) and `drift_summary` is the command's summary line;
+    # `drift` stays NULL until that is decided, so a restart picks up where it left off.
+    schedule_id: Mapped[str | None] = mapped_column(Unicode(36), index=True)
+    drift: Mapped[bool | None] = mapped_column(Boolean)
+    drift_summary: Mapped[str | None] = mapped_column(Unicode(500))
+
+
+class ScheduleRecord(Base):
+    """A schedule for a read-only command (#80, ADR 0014). Its arguments are the form values
+    a Run would take, without files; they are judged by the engine when saved and again each
+    time it fires. `next_run_at` is when it is next due, so missed times after a restart
+    collapse into one Run."""
+
+    __tablename__ = "schedules"
+
+    id: Mapped[str] = mapped_column(Unicode(36), primary_key=True)
+    name: Mapped[str] = mapped_column(Unicode(100))
+    command: Mapped[str] = mapped_column(Unicode(100))
+    subcommand: Mapped[str | None] = mapped_column(Unicode(100))
+    values: Mapped[dict] = mapped_column(JSON)
+    timing: Mapped[dict] = mapped_column(JSON)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    created_by: Mapped[str] = mapped_column(Unicode(320))
+    creator_name: Mapped[str] = mapped_column(Unicode(200))
+    creator_role: Mapped[str] = mapped_column(Unicode(20))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    updated_by: Mapped[str | None] = mapped_column(Unicode(320))
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    next_run_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    last_run_id: Mapped[str | None] = mapped_column(Unicode(36))
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class LedgerRow(Base):
@@ -275,6 +310,7 @@ SUMMARY_COLUMNS = (
     RunRecord.approval_status, RunRecord.approval_reasons, RunRecord.approval_requested_at,
     RunRecord.approval_expires_at, RunRecord.approval_decided_by,
     RunRecord.approval_decided_at, RunRecord.approval_comment,
+    RunRecord.schedule_id, RunRecord.drift, RunRecord.drift_summary,
 )
 
 
@@ -300,6 +336,8 @@ def summary_dict(run: RunRecord, now: datetime | None = None) -> dict:
         "started_at": _iso(run.started_at), "finished_at": _iso(run.finished_at),
         "applied_from": run.applied_from, "cap_override": cap_override(run),
         "approval": approval_view(run, now or utc_now()),
+        "schedule_id": run.schedule_id, "drift": run.drift,
+        "drift_summary": run.drift_summary,
     }
 
 
@@ -674,3 +712,77 @@ class RunStore:
             f = session.scalar(select(RunFile).where(RunFile.id == file_id,
                                                      RunFile.run_id == run_id))
             return file_dict(f) if f else None
+
+    # ---------- schedules (#80, ADR 0014) ----------
+
+    def save_schedule(self, schedule: ScheduleRecord) -> ScheduleRecord:
+        with Session(self.engine, expire_on_commit=False) as session, session.begin():
+            session.add(schedule)
+        return schedule
+
+    @retries_deadlocks
+    def schedules(self) -> list[ScheduleRecord]:
+        """Every schedule, by name."""
+        with Session(self.engine, expire_on_commit=False) as session:
+            return list(session.scalars(select(ScheduleRecord)
+                                        .order_by(ScheduleRecord.name, ScheduleRecord.id)))
+
+    @retries_deadlocks
+    def schedule(self, schedule_id: str) -> ScheduleRecord | None:
+        with Session(self.engine, expire_on_commit=False) as session:
+            return session.get(ScheduleRecord, schedule_id)
+
+    def update_schedule(self, schedule_id: str, **values) -> bool:
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(update(ScheduleRecord)
+                                     .where(ScheduleRecord.id == schedule_id).values(**values))
+            return result.rowcount == 1
+
+    def delete_schedule(self, schedule_id: str) -> bool:
+        """Its Scheduled runs stay in the history, still naming the schedule's ID."""
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(delete(ScheduleRecord)
+                                     .where(ScheduleRecord.id == schedule_id))
+            return result.rowcount == 1
+
+    @retries_deadlocks
+    def due_schedules(self) -> list[ScheduleRecord]:
+        """Schedules that aren't paused and whose next time has come, earliest first."""
+        now = self.clock().astimezone(timezone.utc)
+        with Session(self.engine, expire_on_commit=False) as session:
+            return list(session.scalars(
+                select(ScheduleRecord)
+                .where(ScheduleRecord.paused == false(), ScheduleRecord.next_run_at <= now)
+                .order_by(ScheduleRecord.next_run_at, ScheduleRecord.id)))
+
+    def claim_schedule(self, schedule_id: str, due_at: datetime, next_run_at: datetime) -> bool:
+        """Atomically move a due schedule on to `next_run_at`, the first time after now: so
+        however many of its times were missed, it fires once. False if another claim, an edit
+        or a pause got there first (its next_run_at is no longer `due_at`)."""
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(
+                update(ScheduleRecord)
+                .where(ScheduleRecord.id == schedule_id, ScheduleRecord.paused == false(),
+                       ScheduleRecord.next_run_at == due_at)
+                .values(next_run_at=next_run_at))
+            return result.rowcount == 1
+
+    @retries_deadlocks
+    def scheduled_runs_to_judge(self) -> list[str]:
+        """Finished Scheduled runs whose Drift hasn't been decided yet."""
+        with Session(self.engine) as session:
+            return list(session.scalars(
+                select(RunRecord.id)
+                .where(RunRecord.schedule_id.is_not(None), RunRecord.status == FINISHED,
+                       RunRecord.drift.is_(None))
+                .order_by(RunRecord.finished_at, RunRecord.id)))
+
+    def record_drift(self, run_id: str, drift: bool, summary: str | None) -> bool:
+        """Decide a finished Scheduled run's Drift once; False if it was decided already."""
+        with Session(self.engine) as session, session.begin():
+            result = session.execute(
+                update(RunRecord)
+                .where(RunRecord.id == run_id, RunRecord.status == FINISHED,
+                       RunRecord.drift.is_(None))
+                .values(drift=drift, drift_summary=summary))
+            return result.rowcount == 1

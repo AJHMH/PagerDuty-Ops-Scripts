@@ -184,3 +184,17 @@ def test_ep_move_not_planned_when_a_schedule_is_unowned_or_missing():
     pd.escalation_policies["PEP2"]["escalation_rules"][0]["targets"][-1]["id"] = "PSGONE"
     _, v = run("service_ep_team_mismatch", pd)
     assert v.plan_items == []
+
+
+def test_drift_is_declared_as_the_exit_code_and_summary_line_the_command_produces(
+        monkeypatch, caplog):
+    # The UI reads these to tell Teams about Drift found by a Scheduled run (#80).
+    import logging
+    monkeypatch.setenv("PD_API_TOKEN", "t")
+    monkeypatch.setattr(validate, "PDState", lambda token: account())
+    caplog.set_level(logging.INFO)
+    code = validate.main(["--checks", "user_not_on_owning_team", "--fail-on", "warning"])
+    assert code == validate.DRIFT_EXIT_CODE
+    summaries = [r.getMessage() for r in caplog.records
+                 if r.getMessage().startswith(validate.DRIFT_SUMMARY)]
+    assert summaries == ["Findings: info=0, warning=1, error=0"]

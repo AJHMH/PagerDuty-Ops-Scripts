@@ -101,6 +101,11 @@ export interface Run {
   review: Review | null;
   cap_override: CapOverride | null;
   approval: Approval | null;
+  // A Scheduled run (#80) names its schedule; `drift` is decided once it has finished.
+  schedule_id: string | null;
+  schedule_name?: string | null;  // null once the schedule is deleted
+  drift: boolean | null;
+  drift_summary: string | null;
 }
 
 // A write cap raised above its default, with the reason recorded for it (#75).
@@ -218,6 +223,9 @@ export interface RunSummary {
   applied_from: string | null;
   cap_override: CapOverride | null;
   approval: Approval | null;
+  schedule_id: string | null;
+  drift: boolean | null;
+  drift_summary: string | null;
 }
 
 export interface HistoryPage {
@@ -288,3 +296,56 @@ export function getLedger(filters: HistoryFilters): Promise<LedgerPage> {
 
 export const fileUrl = (runId: string, fileId: number) =>
   `/api/runs/${encodeURIComponent(runId)}/files/${fileId}`;
+
+// Scheduled runs (#80, ADR 0014): read-only commands only, with arguments but no files. The
+// service judges each schedule's command line with the engine when it is saved and each
+// time it fires; this only offers what it would accept.
+export type TimingKind = "daily" | "weekly" | "hourly";
+export const EVERY_HOURS = [1, 2, 3, 4, 6, 8, 12] as const;
+export const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"] as const;
+
+export interface Timing {
+  kind: TimingKind;
+  at: string;              // "HH:MM" Central; for hourly, only the minute counts
+  days: number[];          // weekly: 0 = Monday … 6 = Sunday
+  every_hours: number | null;
+}
+
+export interface Schedule {
+  id: string;
+  name: string;
+  command: string;
+  subcommand: string | null;
+  values: Values;
+  timing: Timing;
+  description: string;     // e.g. "Mon and Fri at 02:30 Central"
+  paused: boolean;
+  created_by: string;
+  creator_name: string;
+  created_at: string;
+  updated_by: string | null;
+  updated_at: string | null;
+  next_run_at: string | null;  // null while paused
+  last_run_id: string | null;
+  last_run_at: string | null;
+}
+
+export interface ScheduleInput {
+  name: string;
+  command: string;
+  subcommand: string | null;
+  values: Values;
+  timing: Timing;
+}
+
+export const getSchedules = () => call<{ schedules: Schedule[] }>("/api/schedules");
+export const createSchedule = (input: ScheduleInput) =>
+  call<Schedule>("/api/schedules", { method: "POST", body: JSON.stringify(input) });
+export const editSchedule = (id: string, input: ScheduleInput) =>
+  call<Schedule>(`/api/schedules/${encodeURIComponent(id)}`,
+                 { method: "PUT", body: JSON.stringify(input) });
+export const pauseSchedule = (id: string, paused: boolean) =>
+  call<Schedule>(`/api/schedules/${encodeURIComponent(id)}/${paused ? "pause" : "resume"}`,
+                 { method: "POST" });
+export const deleteSchedule = (id: string) =>
+  call<Record<string, never>>(`/api/schedules/${encodeURIComponent(id)}`, { method: "DELETE" });

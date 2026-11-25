@@ -332,7 +332,8 @@ class Requester:
 def new_run(run_id: str, command: str, argv: list[str], kind: str, requester: Requester,
             inputs, *, at, timeout_seconds: int, status: str = RUNNING,
             applied_from: str | None = None,
-            override: CapOverride | None = None) -> RunRecord:
+            override: CapOverride | None = None,
+            schedule_id: str | None = None) -> RunRecord:
     """A Run about to execute (or, for an apply, to queue) at `at` on the service's clock,
     with its cap override (#75)."""
     return RunRecord(
@@ -341,7 +342,7 @@ def new_run(run_id: str, command: str, argv: list[str], kind: str, requester: Re
         requested_by=requester.email, requester_name=requester.name,
         requester_role=requester.role, queued_at=at,
         started_at=at if status == RUNNING else None, timeout_seconds=timeout_seconds,
-        applied_from=applied_from,
+        applied_from=applied_from, schedule_id=schedule_id,
         input_hash=input_hash(command, argv, [(f.path, f.sha256) for f in inputs]))
 
 

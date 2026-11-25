@@ -63,6 +63,12 @@ DEFAULT_CONFIG = {
 
 
 RISK = READ_ONLY
+# A Scheduled run of this command (ADR 0014, #80) found Drift when it exits DRIFT_EXIT_CODE
+# after logging the line that starts with DRIFT_SUMMARY ("Findings: info=…, warning=…,
+# error=…"), which is the summary the UI passes on. An API failure also exits 1 but stops
+# before that line, so it isn't Drift.
+DRIFT_EXIT_CODE = EXIT_FAILURES
+DRIFT_SUMMARY = "Findings: "
 
 
 def build_parser():
