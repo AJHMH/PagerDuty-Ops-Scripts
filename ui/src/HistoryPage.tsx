@@ -4,7 +4,7 @@ import { getCommands, getHistory, OUTCOMES, RUN_KINDS, type Command, type Histor
 
 const PER_PAGE = 50;
 const UNFINISHED = "unfinished";  // the service's filter for Runs still queued or running
-const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
+export const TIME_ZONE = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
 // The filters live in the URL (#/history?command=…), so a search can be shared or
 // bookmarked. Dates are whole local days; "to" includes its day.
@@ -36,7 +36,7 @@ function hashFor(form: Form, page: number): string {
 
 // Local midnight of a yyyy-mm-dd day (plus some days), as UTC; undefined for a date that
 // isn't one, e.g. from a hand-edited link.
-function startOfLocalDay(date: string, plusDays = 0): string | undefined {
+export function startOfLocalDay(date: string, plusDays = 0): string | undefined {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined;
   const day = new Date(`${date}T00:00:00`);
   if (Number.isNaN(day.getTime())) return undefined;

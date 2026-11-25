@@ -44,6 +44,7 @@ from .overrides import (
     record_override,
     recorded_text,
 )
+from .retention import Purger
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .settings import Settings
@@ -145,18 +146,23 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
     """`clock` (UTC now) times Approvals; tests move it on to check expiry (#77)."""
     clock = clock or utc_now
     catalog = engine_catalog() if catalog is None else catalog
-    store = RunStore(settings.database_url, clock=clock)
+    store = RunStore(settings.database_url, clock=clock,
+                     ledger_enabled=settings.ledger_enabled)
     executor = Executor(store, settings, catalog, clock=clock)
+    purger = Purger(store, settings, clock)
 
     @asynccontextmanager
     async def lifespan(_app):
         executor.start()  # Stopped for what a restart cut off; the queue resumes
+        await run_in_threadpool(purger.start)  # the 90-day purge: now, then daily (#76)
         try:
             yield
         finally:
+            await run_in_threadpool(purger.stop)
             await run_in_threadpool(executor.stop)
 
     app = FastAPI(title="PagerDuty Ops", docs_url=None, redoc_url=None, lifespan=lifespan)
+    app.state.purge_now = purger.purge_now
     app.add_middleware(SessionMiddleware, secret_key=settings.session_secret,
                        https_only=True, same_site="lax", max_age=SESSION_MAX_AGE_SECONDS)
     if identity is None:
@@ -457,6 +463,20 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
     def queue(who: SignedIn):
         """The Writing run executing now, and those waiting for it, oldest first."""
         return store.queue()
+
+    @app.get("/api/ledger")
+    def ledger(who: SignedIn, command: str | None = None, requester: str | None = None,
+               since: str | None = None, before: str | None = None,
+               outcome: str | None = None, page: Annotated[int, Query(ge=1)] = 1,
+               per_page: Annotated[int, Query(ge=1, le=MAX_HISTORY_PAGE)] = 50):
+        """The permanent Ledger of Writing runs (#76), for every role, filtered like the
+        history. `enabled` is false while it is switched off (PD_UI_LEDGER=off)."""
+        if outcome is not None and outcome not in FINAL_OUTCOMES:
+            raise HTTPException(422, f"outcome must be one of {sorted(FINAL_OUTCOMES)}.")
+        return store.ledger(command=command or None, requester=(requester or "").strip(),
+                            since=parse_instant("since", since),
+                            before=parse_instant("before", before), outcome=outcome,
+                            page=page, per_page=per_page)
 
     @app.get("/api/runs")
     def run_history(who: SignedIn, command: str | None = None, requester: str | None = None,
