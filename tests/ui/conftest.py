@@ -163,6 +163,8 @@ def settings(tmp_path, database_url):
         secret_env={"PD_API_TOKEN": SECRET},
         extra_env={"PYTHONPATH": os.pathsep.join([str(HERE), os.environ.get("PYTHONPATH", "")])},
         session_secret="test-session-secret",
+        # Most tests exercise every feature; test_phase.py covers the read-only default.
+        max_phase=3,
     )
 
 

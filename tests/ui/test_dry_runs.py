@@ -43,11 +43,12 @@ def test_a_diff_first_command_runs_without_apply(client):
         "dry-run", [], "+ new-template\n")
 
 
-def test_an_apply_is_refused_for_everyone(client):
+def test_a_new_run_never_applies_at_any_phase(client):
+    """An apply is only ever of a reviewed dry run, even at Phase 3 (ADRs 0003, 0016)."""
     for headers in (OPERATOR, APPROVER):
         response = run(client, "ui-differ", argv=["--apply", "-y"], headers=headers)
         assert response.status_code == 403
-        assert "Apply" in response.json()["detail"]
+        assert "starts as a dry run" in response.json()["detail"]
 
 
 def test_a_writing_subcommand_is_dry_run_and_a_read_only_one_is_a_report(client):

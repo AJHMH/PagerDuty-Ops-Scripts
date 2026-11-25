@@ -1,7 +1,7 @@
 # Team web UI (`pagerduty_ops_ui`)
 
 A thin web layer over the CLI engine for the PagerDuty/ServiceNow admin team. The design is
-recorded in [CONTEXT.md](../CONTEXT.md) and ADRs 0001–0015; the spec is issue #62.
+recorded in [CONTEXT.md](../CONTEXT.md) and ADRs 0001–0016; the spec is issue #62.
 
 **Status: Phase 1 complete (#66, #67, #72).**
 - An admin signs in with Okta.
@@ -10,9 +10,9 @@ recorded in [CONTEXT.md](../CONTEXT.md) and ADRs 0001–0015; the spec is issue 
 - Viewers run read-only commands.
 - Operators and Approvers can also **dry-run** commands that write, and review what would change.
 
-**Phase 2 has started (#73).** An Operator can **apply** a dry run they reviewed, if it isn't an Irreversible operation.
+**Phase 2 has started (#73).** An Operator can **apply** a dry run they reviewed, if it isn't an Irreversible operation. **Phase 3 has started (#77):** an Irreversible operation can be applied with an Approval.
 
-Commands that write are refused until Apply arrives in Phase 2.
+The code for later phases ships before they are approved. Each server is set to the phase it is approved for with `PD_UI_MAX_PHASE` (ADR 0016; see [Rollout phase](#rollout-phase-pd_ui_max_phase-adr-0016)). It defaults to **1, read only**.
 
 ## How it fits together
 
@@ -100,6 +100,20 @@ A command's write caps (`--max-deletes`, `--max-writes`, `--max-services`) are n
 - **No silent caps.** A declared cap the parser doesn't have makes `assess()` fail closed, and a unit test checks that every declared cap is a numeric option of its command.
 - **The form.** Each field says whether it is a cap (`cap: true`). The run form asks for the reason as soon as a cap is set above its default.
 
+## Rollout phase: `PD_UI_MAX_PHASE` (ADR 0016)
+
+| Value | What the service allows |
+|---|---|
+| `1` (default, also when unset) | Reports, dry runs and reviews. Every apply is refused (403, "Apply is turned off…"), and the Run page says the service is read only instead of offering Apply. |
+| `2` | Also applies that aren't an Irreversible operation. An Irreversible apply, asking for an Approval and approving or rejecting are refused (403, naming Phase 3), and the front end hides them and the "Waiting for approval" list. |
+| `3` | Everything, including Irreversible operations with Approvals. |
+
+Any other value (`0`, `4`, `two`) stops the service at startup, so a typo can't move it to a different phase in either direction. Whether an apply is irreversible is the engine's `assess()` verdict (ADR 0010), the same one the Approval check uses. The writer checks the phase again when an apply reaches the writing slot, so an apply queued before the phase was lowered and the service restarted is recorded as failed with nothing applied. `GET /api/me` reports `max_phase` so the front end can hide what the service would refuse. The service enforces the phase; the front end only follows it.
+
+**Defence in depth.** The phase is enforced in code, but a server's credentials should still allow no more than its phase: a read-only PagerDuty key and no ServiceNow write ACLs at Phase 1, then the write credentials once Phase 2 is approved. A bug in the service then still can't write.
+
+**Upgrading a server that already applies.** Before this setting existed, `main` allowed every phase. A server that is approved for Phase 2 or 3 must set `PD_UI_MAX_PHASE` before it is upgraded, or it comes back read only.
+
 ## Apply (#73, ADRs 0003 and 0011)
 
 1. **Run and review.** The admin who ran a dry run that succeeded and completed records that they reviewed it: `POST /api/runs/{id}/review`. Only that admin can review it, and only Operators and Approvers can review at all.
@@ -185,6 +199,7 @@ A Run receives them only as environment variables. Apart from them, it gets a sh
 | `PD_UI_OKTA_ISSUER`, `PD_UI_OKTA_CLIENT_ID`, `PD_UI_OKTA_CLIENT_SECRET`, `PD_UI_OKTA_REDIRECT_URI` | Okta OIDC app. The ID token must include a `groups` claim |
 | `PD_UI_STATIC_DIR` | The built front end (`ui/dist`) |
 | `PD_UI_PORT` | Port on 127.0.0.1 (default 8080). IIS proxies to it |
+| `PD_UI_MAX_PHASE` | Rollout phase this server is approved for: `1` read only (default), `2` applies that can be undone, `3` everything ([above](#rollout-phase-pd_ui_max_phase-adr-0016)) |
 | `PD_API_TOKEN`, `SN_*`, `OKTA_*` | Engine credentials and settings, passed through to Runs |
 
 ## Running it
@@ -229,6 +244,6 @@ The Okta adapter test stubs Okta's discovery document and checks the login redir
 ## Not yet
 
 These are later tickets:
-- the Windows host packaging (#71);
+- the Windows host packaging (#71), whose install guide should tell installers to set `PD_UI_MAX_PHASE` and match the service's credentials to it;
 - the rest of Phase 2: the Ledger and 90-day purge (#76);
 - the rest of Phase 3: Teams notifications for Approval requests (#78), ServiceNow production applies with shared receipts (#79), and scheduled read-only Runs (#80).

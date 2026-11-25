@@ -138,6 +138,16 @@ function ApprovalPanel({ run, me, onChange }: { run: Run; me: Me; onChange: (run
   const [comment, setComment] = useState("");
   const approval = run.approval;
   if (!approval || run.kind !== "dry-run") return null;
+  if (me.max_phase < 3) {
+    return (
+      <section aria-label="Approval" className="steps approval">
+        <h2>Irreversible operations aren't turned on yet</h2>
+        <p>Applying this is an <strong>Irreversible operation</strong>:{" "}
+          {approval.reasons.join("; ")}. This service is in Phase {me.max_phase}; Irreversible
+          operations, and their Approvals, arrive in Phase 3.</p>
+      </section>
+    );
+  }
   const mine = run.requested_by === me.email;
   const canDecide = approval.status === "awaiting-approval" && me.role === "approver" && !mine;
   // The requester asks once the review shows it's needed, and again after a request or an
@@ -199,6 +209,12 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
   if (run.kind !== "dry-run" || !mine || run.outcome !== "succeeded" || !run.review?.complete) {
     return null;
   }
+  if (me.max_phase < 2 && !run.applied_run_id) {
+    return (
+      <p className="notice">This service is read only (Phase 1): it shows what would change,
+        but doesn't apply it.</p>
+    );
+  }
   if (run.applied_run_id) {
     return (
       <p className="notice">Sent to be applied: <a href={runLink(run.applied_run_id)}>see
@@ -208,7 +224,7 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
 
   return (
     <section aria-label="Apply" className="steps">
-      {!run.reviewed_by ? (
+      {run.reviewed_by && run.approval && me.max_phase < 3 ? null : !run.reviewed_by ? (
         <button type="button" disabled={busy} onClick={() => act(() => reviewRun(run.id))}>
           I've reviewed these changes
         </button>
