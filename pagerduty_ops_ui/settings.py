@@ -44,6 +44,10 @@ class Settings:
     run_timeout_seconds: int = 2 * 3600  # ADR 0012; a command's declaration may extend it
     max_upload_bytes: int = 25 * 1024 * 1024
     max_request_bytes: int = 100 * 1024 * 1024
+    # ADR 0013: Runs and their files are purged after this many days; the Ledger is kept,
+    # unless Records Management declines it (PD_UI_LEDGER=off), when it is purged too.
+    retention_days: int = 90
+    ledger_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -65,6 +69,23 @@ class Settings:
                 client_secret=need("PD_UI_OKTA_CLIENT_SECRET"),
                 redirect_uri=need("PD_UI_OKTA_REDIRECT_URI"),
             ),
+            ledger_enabled=ledger_switch(),
             static_dir=Path(os.environ["PD_UI_STATIC_DIR"])
             if os.environ.get("PD_UI_STATIC_DIR") else None,
         )
+
+
+LEDGER_ON = ("on", "true", "1", "yes", "")
+LEDGER_OFF = ("off", "false", "0", "no")
+
+
+def ledger_switch() -> bool:
+    """PD_UI_LEDGER: on unless switched off. A value that is neither is a configuration error,
+    not a guess either way: the Ledger is a records decision (ADR 0013)."""
+    value = os.environ.get("PD_UI_LEDGER", "").strip().lower()
+    if value in LEDGER_ON:
+        return True
+    if value in LEDGER_OFF:
+        return False
+    raise SystemExit(f"PD_UI_LEDGER must be on or off (or true/false, 1/0, yes/no), not "
+                     f"{value!r}.")
