@@ -13,8 +13,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [1.2.0] - 2026-11-25
 
-There is no 1.1.0 release: a `v1.1.0` tag from April points at a commit whose version was
-still 1.0.0, so the release workflow refused it.
+There is no 1.1.0 release: a `v1.1.0` tag from April pointed at a commit whose version was
+still 1.0.0, so the release workflow refused it. That tag has since been deleted.
 
 ### Added
 - **Team web UI** (`pagerduty_ops_ui` service, `ui/` front end; install with
