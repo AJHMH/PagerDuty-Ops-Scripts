@@ -281,10 +281,13 @@ class Executor:
                                                   "succeed, so nothing was applied. See it "
                                                   "for why.")
         elif fresh_record.output_hash != dry.output_hash:
+            # A new diff needs a new Approval. Withdraw it before the apply is finished and
+            # the writing slot released, so no one sees a finished apply whose dry run is
+            # still approved.
+            self.store.withdraw_approval(dry.id)
             self._not_applied(apply_id, CHANGED, "What this would change has changed since "
                                                    "it was reviewed, so nothing was applied. "
                                                    "Review the fresh dry run.")
-            self.store.withdraw_approval(dry.id)  # a new diff needs a new Approval
         elif not self._still_approved(verdict, apply_id):
             return  # the Approval expired during the fresh dry run: nothing was applied
         else:

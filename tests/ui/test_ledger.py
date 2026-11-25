@@ -16,7 +16,9 @@ def reviewed(client, values=None):
     dry = finished(client, client.post("/api/runs", json={"command": "ui-writer",
                                                           "values": values or {}},
                                        headers=OPERATOR))
-    assert client.post(f"/api/runs/{dry['id']}/review", headers=OPERATOR).status_code == 200
+    response = client.post(f"/api/runs/{dry['id']}/review", headers=OPERATOR)
+    # Say why on failure: which check refused it, and how the dry run ended.
+    assert response.status_code == 200, (response.text, dry["outcome"], dry.get("note"))
     return dry
 
 
