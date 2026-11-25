@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ApiError, getMe, type Me } from "./api";
 import { ApprovalsPanel } from "./ApprovalsPanel";
 import { HistoryPage } from "./HistoryPage";
+import { LedgerPage } from "./LedgerPage";
 import { QueuePanel } from "./QueuePanel";
 import { RunForm } from "./RunForm";
 import { RunPage } from "./RunPage";
@@ -51,11 +52,12 @@ export function App() {
     <>
       <header>
         <a href="#/" className="brand">PagerDuty Ops</a>
-        <nav><a href="#/">Run</a> · <a href="#/history">History</a></nav>
+        <nav><a href="#/">Run</a> · <a href="#/history">History</a> · <a href="#/ledger">Ledger</a></nav>
         <span>{session.me.name} · {session.me.role} · <a href="/auth/logout">Sign out</a></span>
       </header>
       <main>{runMatch ? <RunPage id={decodeURIComponent(runMatch[1])} me={session.me} />
         : route.startsWith("/history") ? <HistoryPage hash={route} />
+        : route.startsWith("/ledger") ? <LedgerPage hash={route} />
         : <><RunForm role={session.me.role} /><QueuePanel />
           {session.me.max_phase >= 3 && <ApprovalsPanel />}</>}</main>
     </>

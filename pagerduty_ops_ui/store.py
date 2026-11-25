@@ -13,6 +13,7 @@ from sqlalchemy import (
     Unicode,
     UnicodeText,
     create_engine,
+    delete,
     func,
     or_,
     select,
@@ -26,7 +27,9 @@ from .overrides import MAX_REASON_LENGTH, CapOverride
 from .review import review
 
 QUEUED, RUNNING, FINISHED = "queued", "running", "finished"
-RUN_KINDS = ("report", "dry-run", "apply")
+PURGE_BATCH = 500  # Run IDs per DELETE, well under SQL Server's 2100-parameter limit
+APPLY = "apply"  # the kind of a Writing run
+RUN_KINDS = ("report", "dry-run", APPLY)
 UNFINISHED = "unfinished"  # history filter: Runs still queued or running (no outcome yet)
 
 
@@ -101,6 +104,87 @@ class RunRecord(Base):
     fresh_dry_run_id: Mapped[str | None] = mapped_column(Unicode(36))
 
 
+class LedgerRow(Base):
+    """The permanent record of a finished Writing run (#76, ADR 0013): who requested it, who
+    approved it, when, and how it ended. Never its arguments, inputs, diff or output. Kept
+    after the Run itself is purged."""
+
+    __tablename__ = "ledger"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(Unicode(36), unique=True)
+    command: Mapped[str] = mapped_column(Unicode(100))
+    requested_by: Mapped[str] = mapped_column(Unicode(320))
+    requester_name: Mapped[str] = mapped_column(Unicode(200))
+    requester_role: Mapped[str] = mapped_column(Unicode(20))
+    approved_by: Mapped[str | None] = mapped_column(Unicode(320))
+    queued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str | None] = mapped_column(Unicode(20))
+
+
+def ledger_dict(row: LedgerRow, run_kept: bool) -> dict:
+    """`run_kept`: the Run itself is still kept (not yet purged), so the row can link to it."""
+    return {"run_id": row.run_id, "command": row.command, "requested_by": row.requested_by,
+            "requester_name": row.requester_name, "requester_role": row.requester_role,
+            "approved_by": row.approved_by, "queued_at": _iso(row.queued_at),
+            "started_at": _iso(row.started_at), "finished_at": _iso(row.finished_at),
+            "outcome": row.outcome, "run_kept": run_kept}
+
+
+def _who_when_filters(model, *, command, requester, since, before) -> list:
+    """The filters the Run history and the Ledger share: the command, part of the requester's
+    email or name (ignoring case), and when it was requested (`since` inclusive, `before`
+    exclusive)."""
+    conditions = []
+    if command:
+        conditions.append(model.command == command)
+    if requester:
+        needle = requester.lower()
+        conditions.append(or_(
+            func.lower(model.requested_by).contains(needle, autoescape=True),
+            func.lower(model.requester_name).contains(needle, autoescape=True)))
+    if since is not None:
+        conditions.append(model.queued_at >= since)
+    if before is not None:
+        conditions.append(model.queued_at < before)
+    return conditions
+
+
+def _linked_groups(runs) -> list[list]:
+    """Runs that refer to each other (a dry run, the applies made from it and their fresh
+    dry runs) as connected groups: the purge keeps or deletes a group whole (ADR 0013)."""
+    parent = {r.id: r.id for r in runs}
+
+    def root(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    for r in runs:
+        for other in (r.applied_from, r.applied_run_id, r.fresh_dry_run_id):
+            if other in parent:
+                parent[root(other)] = root(r.id)
+    groups: dict[str, list] = {}
+    for r in runs:
+        groups.setdefault(root(r.id), []).append(r)
+    return list(groups.values())
+
+
+def _batches(groups: list[list[str]]):
+    """Whole groups at a time, about PURGE_BATCH IDs per batch."""
+    batch: list[str] = []
+    for group in groups:
+        batch.extend(group)
+        if len(batch) >= PURGE_BATCH:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
 class RunFile(Base):
     """A file stored with a Run: an uploaded input or an output the command wrote. The file
     lives in the Run's directory; its SHA-256 shows whether it changed afterwards."""
@@ -115,12 +199,16 @@ class RunFile(Base):
     sha256: Mapped[str] = mapped_column(Unicode(64))
 
 
+def _as_utc(value: datetime) -> datetime:
+    if value.tzinfo is None:  # SQLite drops the zone; everything is stored in UTC
+        value = value.replace(tzinfo=timezone.utc)
+    return value.astimezone(timezone.utc)
+
+
 def _iso(value: datetime | None) -> str | None:
     if value is None:
         return None
-    if value.tzinfo is None:  # SQLite drops the zone; everything is stored in UTC
-        value = value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+    return _as_utc(value).isoformat().replace("+00:00", "Z")
 
 
 def _message(run: RunRecord) -> str | None:
@@ -159,7 +247,7 @@ def cap_override(run: RunRecord) -> dict | None:
 
 def approval_view(run: RunRecord, now: datetime) -> dict | None:
     approval = Approval.of(run)
-    return approval.as_dict(now, _iso, carried=run.kind == "apply") if approval else None
+    return approval.as_dict(now, _iso, carried=run.kind == APPLY) if approval else None
 
 
 def summary_dict(run: RunRecord, now: datetime | None = None) -> dict:
@@ -192,8 +280,9 @@ def to_dict(run: RunRecord, files: list[RunFile], now: datetime | None = None) -
 
 
 class RunStore:
-    def __init__(self, database_url: str, clock=None):
-        self.clock = clock or utc_now  # judges Approval expiry (tests move it on)
+    def __init__(self, database_url: str, clock=None, ledger_enabled: bool = True):
+        self.clock = clock or utc_now  # judges Approval expiry and Run age (tests move it on)
+        self.ledger_enabled = ledger_enabled  # PD_UI_LEDGER; see ADR 0013 and #76
         self.engine = create_engine(database_url)
         # The schema comes from migrations, applied by pd-ui-migrate (#70); the service
         # only checks it, so its own account needs no rights to change the schema.
@@ -219,7 +308,7 @@ class RunStore:
             return to_dict(run, list(files), self.clock())
 
     def mark_reviewed(self, run_id: str, email: str) -> None:
-        self.update(run_id, reviewed_by=email, reviewed_at=now())
+        self.update(run_id, reviewed_by=email, reviewed_at=self.clock())
 
     def claim_apply(self, dry_run_id: str, apply_id: str) -> bool:
         """Atomically reserve a dry run for one apply; False if it is already taken."""
@@ -255,7 +344,7 @@ class RunStore:
         with Session(self.engine) as session, session.begin():
             result = session.execute(
                 update(RunRecord).where(RunRecord.id == run_id, RunRecord.status == QUEUED)
-                .values(status=RUNNING, started_at=now()))
+                .values(status=RUNNING, started_at=self.clock()))
             return result.rowcount == 1
 
     def update(self, run_id: str, **values) -> None:
@@ -275,13 +364,32 @@ class RunStore:
         with Session(self.engine) as session, session.begin():
             result = session.execute(
                 update(RunRecord).where(RunRecord.id == run_id, RunRecord.status == RUNNING)
-                .values(status=FINISHED, finished_at=now(), **values))
+                .values(status=FINISHED, finished_at=self.clock(), **values))
             if result.rowcount != 1:
                 return False
             for f in files or []:
                 f.run_id = run_id
                 session.add(f)
+            self._write_ledger(session, [run_id])
             return True
+
+    def _write_ledger(self, session: Session, run_ids) -> None:
+        """In the transaction that finishes them: one Ledger row for each finished Writing
+        run among `run_ids` (an apply, whatever its outcome), if the Ledger is switched on."""
+        if not self.ledger_enabled or not run_ids:
+            return
+        recorded = select(LedgerRow.run_id).where(LedgerRow.run_id.in_(list(run_ids)))
+        runs = session.scalars(select(RunRecord).where(  # one row per Run, whatever happens
+            RunRecord.id.in_(list(run_ids)), RunRecord.kind == APPLY,
+            RunRecord.status == FINISHED, RunRecord.id.not_in(recorded))).all()
+        for run in runs:
+            session.add(LedgerRow(
+                run_id=run.id, command=run.command, requested_by=run.requested_by,
+                requester_name=run.requester_name, requester_role=run.requester_role,
+                approved_by=(run.approval_decided_by if run.approval_status == APPROVED
+                             else None),
+                queued_at=run.queued_at, started_at=run.started_at,
+                finished_at=run.finished_at, outcome=run.outcome))
 
     def request_cancel(self, run_id: str, email: str) -> bool:
         """Record who cancelled a running Run; False if it has already finished."""
@@ -304,10 +412,13 @@ class RunStore:
         with Session(self.engine) as session, session.begin():
             result = session.execute(
                 update(RunRecord).where(RunRecord.id == run_id, RunRecord.status == QUEUED)
-                .values(status=FINISHED, outcome="stopped", finished_at=now(),
+                .values(status=FINISHED, outcome="stopped", finished_at=self.clock(),
                         cancelled_by=email,
                         note=f"Cancelled by {email} before it started; nothing was run."))
-            return result.rowcount == 1
+            if result.rowcount != 1:
+                return False
+            self._write_ledger(session, [run_id])
+            return True
 
     def next_queued(self) -> str | None:
         """The Writing run that has waited longest."""
@@ -320,7 +431,7 @@ class RunStore:
         with Session(self.engine) as session:
             summaries = select(RunRecord).options(load_only(*SUMMARY_COLUMNS))
             executing = session.scalar(summaries.where(
-                RunRecord.kind == "apply", RunRecord.status == RUNNING))
+                RunRecord.kind == APPLY, RunRecord.status == RUNNING))
             pending = session.scalars(summaries.where(RunRecord.status == QUEUED)
                                       .order_by(RunRecord.queued_at, RunRecord.id)).all()
             now = self.clock()
@@ -334,13 +445,17 @@ class RunStore:
         with Session(self.engine) as session, session.begin():
             pids = list(session.scalars(select(RunRecord.pid).where(
                 RunRecord.status == RUNNING, RunRecord.pid.is_not(None))))
+            interrupted_ids = list(session.scalars(select(RunRecord.id).where(
+                RunRecord.status == RUNNING)))
             for kind_is_apply, text in ((True, f"{note} It may have been partly applied."),
                                         (False, note)):
-                kind = RunRecord.kind == "apply"
+                kind = RunRecord.kind == APPLY
                 session.execute(
                     update(RunRecord)
                     .where(RunRecord.status == RUNNING, kind if kind_is_apply else ~kind)
-                    .values(status=FINISHED, outcome="stopped", finished_at=now(), note=text))
+                    .values(status=FINISHED, outcome="stopped", finished_at=self.clock(),
+                            note=text))
+            self._write_ledger(session, interrupted_ids)
         return pids
 
     def search(self, *, command: str | None = None, requester: str | None = None,
@@ -350,18 +465,8 @@ class RunStore:
         """The Run history (#69): Runs matching every filter given, newest first, one page
         at a time. `requester` matches part of the requester's email or name, ignoring
         case; `since` is inclusive and `before` exclusive, on when the Run was requested."""
-        conditions = []
-        if command:
-            conditions.append(RunRecord.command == command)
-        if requester:
-            needle = requester.lower()
-            conditions.append(or_(
-                func.lower(RunRecord.requested_by).contains(needle, autoescape=True),
-                func.lower(RunRecord.requester_name).contains(needle, autoescape=True)))
-        if since is not None:
-            conditions.append(RunRecord.queued_at >= since)
-        if before is not None:
-            conditions.append(RunRecord.queued_at < before)
+        conditions = _who_when_filters(RunRecord, command=command, requester=requester,
+                                       since=since, before=before)
         if outcome == UNFINISHED:
             conditions.append(RunRecord.status != FINISHED)
         elif outcome:
@@ -416,6 +521,69 @@ class RunStore:
                        RunRecord.approval_expires_at > now)
                 .order_by(RunRecord.approval_requested_at, RunRecord.id)).all()
             return [summary_dict(r, now) for r in rows]
+
+    def purge(self, cutoff: datetime) -> list[str]:
+        """Delete finished Runs requested before `cutoff`, with their file records (ADR
+        0013); the caller deletes their directories. Runs that refer to each other go
+        together: a dry run is kept while any apply made from it is younger or unfinished.
+        Deletes in batches, each committed, so a failure part way loses nothing it hadn't
+        already deleted. Never the Ledger, unless it is switched off, when its old rows go
+        too. Returns the purged Run IDs."""
+        cutoff = cutoff.astimezone(timezone.utc)
+        with Session(self.engine) as session:
+            runs = session.execute(select(
+                RunRecord.id, RunRecord.queued_at, RunRecord.status, RunRecord.applied_from,
+                RunRecord.applied_run_id, RunRecord.fresh_dry_run_id)).all()
+        due = [[r.id for r in group] for group in _linked_groups(runs)
+               if all(r.status == FINISHED and _as_utc(r.queued_at) < cutoff for r in group)]
+        purged: list[str] = []
+        for batch in _batches(due):
+            with Session(self.engine) as session, session.begin():
+                # A dry run an apply was claimed from since the read above stays. The rows
+                # are locked until the deletes commit, so a claim racing this purge waits,
+                # finds the dry run gone and is refused, rather than queueing an apply
+                # whose dry run is then deleted.
+                gone = list(session.scalars(select(RunRecord.id).where(
+                    RunRecord.id.in_(batch), RunRecord.status == FINISHED,
+                    or_(RunRecord.applied_run_id.is_(None),
+                        RunRecord.applied_run_id.in_(batch)))
+                    # SQL Server's dialect ignores FOR UPDATE: it needs the table hint.
+                    .with_hint(RunRecord, "WITH (UPDLOCK, ROWLOCK)", "mssql")
+                    .with_for_update()))
+                if gone:
+                    session.execute(delete(RunFile).where(RunFile.run_id.in_(gone)))
+                    session.execute(delete(RunRecord).where(RunRecord.id.in_(gone)))
+            purged.extend(gone)
+        if not self.ledger_enabled:
+            with Session(self.engine) as session, session.begin():
+                session.execute(delete(LedgerRow).where(LedgerRow.queued_at < cutoff))
+        return purged
+
+    def run_ids(self) -> set[str]:
+        """Every Run's ID, for the purge to find folders no Run owns."""
+        with Session(self.engine) as session:
+            return set(session.scalars(select(RunRecord.id)))
+
+    def ledger(self, *, command: str | None = None, requester: str | None = None,
+               since: datetime | None = None, before: datetime | None = None,
+               outcome: str | None = None, page: int = 1, per_page: int = 50) -> dict:
+        """The Ledger, newest first, filtered like the Run history (#76)."""
+        conditions = _who_when_filters(LedgerRow, command=command, requester=requester,
+                                       since=since, before=before)
+        if outcome:
+            conditions.append(LedgerRow.outcome == outcome)
+        with Session(self.engine) as session:
+            total = session.scalar(select(func.count()).select_from(LedgerRow)
+                                   .where(*conditions))
+            rows = session.scalars(
+                select(LedgerRow).where(*conditions)
+                .order_by(LedgerRow.queued_at.desc(), LedgerRow.id.desc())
+                .offset((page - 1) * per_page).limit(per_page)).all()
+            kept = set(session.scalars(select(RunRecord.id).where(
+                RunRecord.id.in_([r.run_id for r in rows])))) if rows else set()
+            return {"enabled": self.ledger_enabled,
+                    "rows": [ledger_dict(r, r.run_id in kept) for r in rows],
+                    "total": total, "page": page, "per_page": per_page}
 
     def get_file(self, run_id: str, file_id: int) -> dict | None:
         with Session(self.engine) as session:

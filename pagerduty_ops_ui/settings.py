@@ -16,13 +16,14 @@ from . import phase
 # Environment variables that are secrets: passed to Runs, redacted from everything stored.
 SECRET_ENV_NAMES = (
     "PD_API_TOKEN",
-    "SN_CLIENT_ID", "SN_CLIENT_SECRET", "SN_USERNAME", "SN_PASSWORD",
+    "SN_CLIENT_ID", "SN_CLIENT_SECRET", "SN_USER", "SN_PASSWORD",
     "OKTA_CLIENT_ID", "OKTA_CLIENT_SECRET",
 )
-# Non-secret engine configuration passed through to Runs.
+# Non-secret engine configuration passed through to Runs. Names must match what the engine
+# reads (pagerduty_ops/servicenow.py); tests/ui/test_settings.py checks.
 ENGINE_ENV_NAMES = (
     "PD_FROM_EMAIL", "SN_INSTANCE", "SN_PROD_INSTANCES", "SN_REHEARSAL_INSTANCES",
-    "SN_AUTH_METHOD", "SN_FIELD_MAP", "OKTA_TOKEN_URL", "OKTA_SCOPE",
+    "SN_AUTH_METHOD", "SN_FIELD_MAP", "OKTA_DOMAIN", "OKTA_AUTH_SERVER_ID", "OKTA_SCOPE",
 )
 
 
@@ -47,6 +48,10 @@ class Settings:
     max_upload_bytes: int = 25 * 1024 * 1024
     max_request_bytes: int = 100 * 1024 * 1024
     max_phase: int = phase.DEFAULT  # ADR 0016: 1 read only, 2 reversible applies, 3 all
+    # ADR 0013: Runs and their files are purged after this many days; the Ledger is kept,
+    # unless Records Management declines it (PD_UI_LEDGER=off), when it is purged too.
+    retention_days: int = 90
+    ledger_enabled: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -68,7 +73,24 @@ class Settings:
                 client_secret=need("PD_UI_OKTA_CLIENT_SECRET"),
                 redirect_uri=need("PD_UI_OKTA_REDIRECT_URI"),
             ),
+            ledger_enabled=ledger_switch(),
             static_dir=Path(os.environ["PD_UI_STATIC_DIR"])
             if os.environ.get("PD_UI_STATIC_DIR") else None,
             max_phase=phase.parse(os.environ.get(phase.ENV_NAME)),
         )
+
+
+LEDGER_ON = ("on", "true", "1", "yes", "")
+LEDGER_OFF = ("off", "false", "0", "no")
+
+
+def ledger_switch() -> bool:
+    """PD_UI_LEDGER: on unless switched off. A value that is neither is a configuration error,
+    not a guess either way: the Ledger is a records decision (ADR 0013)."""
+    value = os.environ.get("PD_UI_LEDGER", "").strip().lower()
+    if value in LEDGER_ON:
+        return True
+    if value in LEDGER_OFF:
+        return False
+    raise SystemExit(f"PD_UI_LEDGER must be on or off (or true/false, 1/0, yes/no), not "
+                     f"{value!r}.")

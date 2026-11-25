@@ -93,12 +93,14 @@ class SharedDatabase:
         upgrade(self.url)
 
     def fresh(self, tmp_path):
-        from sqlalchemy import create_engine, text
+        from sqlalchemy import create_engine
+
+        from pagerduty_ops_ui.store import Base
 
         engine = create_engine(self.url)
-        with engine.begin() as db:
-            db.execute(text("DELETE FROM run_files"))
-            db.execute(text("DELETE FROM runs"))
+        with engine.begin() as db:  # every table, children first, so none is missed
+            for table in reversed(Base.metadata.sorted_tables):
+                db.execute(table.delete())
         engine.dispose()
         return self.url
 

@@ -25,7 +25,7 @@ from .overrides import CapOverride, check_reviewed
 from .phase import require_apply
 from .review import MODE_FLAGS, input_hash, output_hash
 from .runner import OUTCOMES, Result, kill_leftover, run_command
-from .store import RUNNING, RunFile, RunRecord, RunStore, now, utc_now
+from .store import RUNNING, RunFile, RunRecord, RunStore, utc_now
 
 # An apply whose fresh dry run no longer matched the review: nothing was applied (#74).
 CHANGED = "changed"
@@ -261,7 +261,7 @@ class Executor:
             return
         self.store.save(new_run(fresh_id, entry.name, dry_argv, "dry-run",
                                 Requester.of(apply), fresh_inputs,
-                                timeout_seconds=apply.timeout_seconds,
+                                at=self.clock(), timeout_seconds=apply.timeout_seconds,
                                 override=CapOverride.of(apply)), fresh_inputs)
         self.store.update(apply_id, fresh_dry_run_id=fresh_id)
         self._cancel_event(fresh_id, cancel)  # cancelling the check cancels the apply
@@ -287,10 +287,13 @@ class Executor:
                                                   "succeed, so nothing was applied. See it "
                                                   "for why.")
         elif fresh_record.output_hash != dry.output_hash:
+            # A new diff needs a new Approval. Withdraw it before the apply is finished and
+            # the writing slot released, so no one sees a finished apply whose dry run is
+            # still approved.
+            self.store.withdraw_approval(dry.id)
             self._not_applied(apply_id, CHANGED, "What this would change has changed since "
                                                    "it was reviewed, so nothing was applied. "
                                                    "Review the fresh dry run.")
-            self.store.withdraw_approval(dry.id)  # a new diff needs a new Approval
         elif not self._still_approved(verdict, apply_id):
             return  # the Approval expired during the fresh dry run: nothing was applied
         else:
@@ -327,16 +330,17 @@ class Requester:
 
 
 def new_run(run_id: str, command: str, argv: list[str], kind: str, requester: Requester,
-            inputs, *, timeout_seconds: int, status: str = RUNNING,
+            inputs, *, at, timeout_seconds: int, status: str = RUNNING,
             applied_from: str | None = None,
             override: CapOverride | None = None) -> RunRecord:
-    """A Run about to execute (or, for an apply, to queue), with its cap override (#75)."""
+    """A Run about to execute (or, for an apply, to queue) at `at` on the service's clock,
+    with its cap override (#75)."""
     return RunRecord(
         **(override.columns() if override else {}),
         id=run_id, command=command, argv=argv, kind=kind, status=status,
         requested_by=requester.email, requester_name=requester.name,
-        requester_role=requester.role, queued_at=now(),
-        started_at=now() if status == RUNNING else None, timeout_seconds=timeout_seconds,
+        requester_role=requester.role, queued_at=at,
+        started_at=at if status == RUNNING else None, timeout_seconds=timeout_seconds,
         applied_from=applied_from,
         input_hash=input_hash(command, argv, [(f.path, f.sha256) for f in inputs]))
 
