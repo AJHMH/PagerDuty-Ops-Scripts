@@ -15,6 +15,15 @@ from pydantic import BaseModel, Field, ValidationError
 from starlette.middleware.sessions import SessionMiddleware
 
 from . import files as run_files
+from .approvals import (
+    APPROVAL_LIFETIME,
+    APPROVED,
+    AWAITING,
+    FINAL,
+    REJECTED,
+    Approval,
+    require_approved,
+)
 from .catalog import describe, engine_catalog
 from .executor import (
     FINAL_OUTCOMES,
@@ -23,11 +32,18 @@ from .executor import (
     Requester,
     copy_inputs,
     new_run,
+    verify_inputs,
 )
 from .forms import BadValues, build_argv, form_for
 from .gate import gate, gate_apply
 from .identity import Admin, IdentityProvider, OktaIdentity
-from .overrides import MAX_REASON_LENGTH, CapOverride, check_reviewed, record_override
+from .overrides import (
+    MAX_REASON_LENGTH,
+    CapOverride,
+    check_reviewed,
+    record_override,
+    recorded_text,
+)
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
 from .settings import Settings
@@ -39,6 +55,7 @@ from .store import (
     RunFile,
     RunRecord,
     RunStore,
+    utc_now,
 )
 
 # Every state-changing API request must carry this header. A browser can't add a custom
@@ -68,6 +85,12 @@ def parse_instant(name: str, value: str | None) -> datetime | None:
     if instant.tzinfo is None:
         raise HTTPException(422, f"{name} needs a timezone, e.g. 2026-11-02T00:00:00-06:00.")
     return instant.astimezone(timezone.utc)
+
+
+class Decision(BaseModel):
+    """An Approver's approve or reject (#77); both need a comment."""
+
+    comment: str = Field(default="", max_length=MAX_REASON_LENGTH)
 
 
 class RunRequest(BaseModel):
@@ -118,10 +141,12 @@ async def read_run_request(request: Request, max_upload_bytes: int, max_request_
 
 
 def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
-               catalog=None) -> FastAPI:
+               catalog=None, clock=None) -> FastAPI:
+    """`clock` (UTC now) times Approvals; tests move it on to check expiry (#77)."""
+    clock = clock or utc_now
     catalog = engine_catalog() if catalog is None else catalog
-    store = RunStore(settings.database_url)
-    executor = Executor(store, settings, catalog)
+    store = RunStore(settings.database_url, clock=clock)
+    executor = Executor(store, settings, catalog, clock=clock)
 
     @asynccontextmanager
     async def lifespan(_app):
@@ -248,8 +273,22 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         if run["outcome"] != "succeeded":
             raise HTTPException(409, "Only a dry run that succeeded can be reviewed: its "
                                      "changes weren't fully determined.")
+        _, _, verdict = judge_apply(run)
         store.mark_reviewed(run_id, admin.email)
+        if verdict.irreversible and run["approval"] is None:
+            # Say up front that applying it needs an Approval, and why (#77).
+            store.update(run_id, approval_reasons=list(verdict.reasons))
         return store.get(run_id)
+
+    def judge_apply(dry: dict):
+        """The engine's verdict on applying a dry run: same command, arguments and inputs,
+        judged in its own directory so a relative Plan path resolves (ADR 0010)."""
+        entry = catalog.get(dry["command"])
+        if entry is None:
+            raise HTTPException(404, f"Unknown command {dry['command']!r}.")
+        neutral = [a for a in dry["argv"] if a not in MODE_FLAGS]
+        return entry, neutral, gate_apply(entry, neutral, settings.run_root / dry["id"],
+                                          settings.secret_env.values())[2]
 
     def copied_inputs(source_id: str, target_id: str) -> list[RunFile]:
         try:
@@ -280,20 +319,91 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
                                                 settings.secret_env.values())
             # The apply raises the reviewed caps (identical inputs); check their reason is on
             # record rather than trusting the dry run, which an older version may have made.
-            check_reviewed(verdict, CapOverride.of(store.record(run_id)))
+            dry_record = store.record(run_id)
+            check_reviewed(verdict, CapOverride.of(dry_record))
+            approval = Approval.of(dry_record)
+            require_approved(verdict, approval, clock())  # Irreversible: a valid Approval
             inputs = copied_inputs(run_id, apply_id)
-            queued = store.save(new_run(
+            record = new_run(
                 apply_id, entry.name, apply_argv, "apply",
                 Requester(admin.email, admin.name, role.label), inputs,
                 timeout_seconds=timeout_for(verdict), status=QUEUED, applied_from=run_id,
-                override=CapOverride.of(store.record(run_id))),
-                inputs)
+                override=CapOverride.of(dry_record))
+            if verdict.irreversible:  # the approver is recorded on the apply too
+                for column, value in approval.columns().items():
+                    setattr(record, column, value)
+            queued = store.save(record, inputs)
         except BaseException:
             store.release_apply(run_id, apply_id)
             shutil.rmtree(settings.run_root / apply_id, ignore_errors=True)
             raise
         executor.wake_writer()
         return queued
+
+    # ---------- Approvals (#77) ----------
+
+    @app.post("/api/runs/{run_id}/approval")
+    def ask_for_approval(run_id: str, who: SignedIn):
+        """The requester asks for an Approval on their reviewed dry run of an Irreversible
+        operation. Whether it is irreversible is the engine's call (fails closed)."""
+        admin, role = who
+        dry = own_dry_run(run_id, admin, role, "ask for an Approval of")
+        if dry["reviewed_by"] != admin.email:
+            raise HTTPException(409, "Review this dry run's changes before asking for an "
+                                     "Approval.")
+        if dry["applied_run_id"]:
+            raise HTTPException(409, "This dry run has already been applied.")
+        current = dry["approval"]["status"] if dry["approval"] else None
+        if current in (AWAITING, APPROVED):
+            raise HTTPException(409, f"This dry run is already {current}.")
+        if current in FINAL:
+            raise HTTPException(409, f"This dry run's Approval was {current}; run a new dry "
+                                     "run and ask again.")
+        try:
+            verify_inputs(settings.run_root / run_id, store.files(run_id, "input"))
+        except InputChanged as e:
+            raise HTTPException(409, f"{e} Run a new dry run.") from None
+        _, _, verdict = judge_apply(dry)
+        if not verdict.irreversible:
+            raise HTTPException(409, "Applying this doesn't need an Approval: the engine "
+                                     "doesn't count it as an Irreversible operation.")
+        now = clock()
+        store.update(run_id, **Approval(AWAITING, tuple(verdict.reasons), now,
+                                        now + APPROVAL_LIFETIME).columns())
+        return store.get(run_id)
+
+    def record_decision(run_id: str, who, body: Decision, decision: str) -> dict:
+        admin, role = who
+        if role < Role.APPROVER:
+            raise HTTPException(403, "Only Approvers can approve or reject.")
+        run = store.record(run_id)
+        if run is None:
+            raise HTTPException(404, "No such Run.")
+        if run.requested_by == admin.email:
+            raise HTTPException(403, "You can't approve or reject your own Run: an Approval "
+                                     "is a second admin's consent.")
+        comment = recorded_text("comment", body.comment, settings.secret_env.values())
+        if not store.decide_approval(run_id, decision, admin.email, comment):
+            raise HTTPException(409, "This Run isn't waiting for an Approval: it may have been "
+                                     "decided already or expired (the requester can ask "
+                                     "again).")
+        return store.get(run_id)
+
+    @app.post("/api/runs/{run_id}/approval/approve")
+    def approve(run_id: str, body: Decision, who: SignedIn):
+        """An Approver other than the requester consents, with a comment. Valid 24 hours."""
+        return record_decision(run_id, who, body, APPROVED)
+
+    @app.post("/api/runs/{run_id}/approval/reject")
+    def reject(run_id: str, body: Decision, who: SignedIn):
+        """An Approver other than the requester refuses, with a comment. Final for this
+        dry run."""
+        return record_decision(run_id, who, body, REJECTED)
+
+    @app.get("/api/approvals")
+    def waiting_for_approval(who: SignedIn):
+        """Requests waiting for an Approver, oldest first."""
+        return {"pending": store.awaiting_approval()}
 
     @app.post("/api/runs/{run_id}/cancel")
     def cancel_run(run_id: str, who: SignedIn):

@@ -1,8 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
-import { applyRun, cancelRun, fileUrl, freshDryRun, getRun, reviewRun, type Me,
-  type Outcome, type Review, type Run } from "./api";
+import { applyRun, askForApproval, cancelRun, decideApproval, fileUrl, freshDryRun,
+  getRun, reviewRun, type Me, type Outcome, type Review, type Run } from "./api";
 
 const POLL_MS = 1000;
+const APPROVAL_POLL_MS = 10000;
 
 const SIGN = { add: "+", change: "~", delete: "−" } as const;
 
@@ -120,6 +121,75 @@ function RunControls({ run, me, onChange }: { run: Run; me: Me; onChange: (run: 
   );
 }
 
+const APPROVAL_LABELS = {
+  "awaiting-approval": "Waiting for an Approver",
+  "approved": "Approved",
+  "rejected": "Rejected",
+  "expired": "Expired",
+  "withdrawn": "Withdrawn: what it would change has changed",
+  "used": "Used",
+} as const;
+
+// An Irreversible operation's Approval (#77): what the engine found irreversible, and the
+// Approver's decision. Approvers other than the requester decide here, with a comment, after
+// reading the diff, inputs, requester and any cap override shown on this page.
+function ApprovalPanel({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
+  const { busy, error, act } = useStep(run, onChange);
+  const [comment, setComment] = useState("");
+  const approval = run.approval;
+  if (!approval || run.kind !== "dry-run") return null;
+  const mine = run.requested_by === me.email;
+  const canDecide = approval.status === "awaiting-approval" && me.role === "approver" && !mine;
+  // The requester asks once the review shows it's needed, and again after a request or an
+  // Approval expired. A rejected or withdrawn one is final: dry-run again.
+  const canAsk = mine && me.role !== "viewer" && !run.applied_run_id && !!run.reviewed_by
+    && (approval.status === null
+      || (approval.status === "expired"));
+  return (
+    <section aria-label="Approval" className="steps approval">
+      <h2>{approval.status === null ? "Applying this needs an Approval"
+        : `Approval: ${APPROVAL_LABELS[approval.status]}`}</h2>
+      <p>Applying this is an <strong>Irreversible operation</strong>:{" "}
+        {approval.reasons.join("; ")}. It needs a second admin's Approval.</p>
+      <dl>
+        {approval.requested_at && <><dt>Asked</dt>
+          <dd>{new Date(approval.requested_at).toLocaleString()}</dd></>}
+        {approval.decided_by && <><dt>{approval.status === "rejected" ? "Rejected" : "Decided"} by</dt>
+          <dd>{approval.decided_by}</dd></>}
+        {approval.comment && <><dt>Comment</dt><dd>“{approval.comment}”</dd></>}
+        {(approval.status === "awaiting-approval" || approval.status === "approved")
+          && approval.expires_at && (
+          <><dt>Expires</dt><dd>{new Date(approval.expires_at).toLocaleString()}</dd></>)}
+      </dl>
+      {canDecide && (
+        <>
+          <label>Comment (required)
+            <textarea required maxLength={500} rows={2} value={comment}
+                      onChange={(e) => setComment(e.target.value)} />
+          </label>
+          <button type="button" disabled={busy || !comment.trim()}
+                  onClick={() => act(() => decideApproval(run.id, "approve", comment))}>
+            Approve
+          </button>{" "}
+          <button type="button" className="danger" disabled={busy || !comment.trim()}
+                  onClick={() => act(() => decideApproval(run.id, "reject", comment))}>
+            Reject
+          </button>
+        </>
+      )}
+      {canAsk && (
+        <button type="button" disabled={busy} onClick={() => act(() => askForApproval(run.id))}>
+          Ask an Approver for an Approval
+        </button>
+      )}
+      {approval.status === "awaiting-approval" && mine && (
+        <p className="hint">An Approver other than you must approve it.</p>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
+    </section>
+  );
+}
+
 // Review, then Apply (#73): only for the admin who ran a dry run that succeeded. The service
 // enforces every gate; this only decides which step to offer.
 function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: Run) => void }) {
@@ -158,6 +228,7 @@ function ApplySteps({ run, me, onChange }: { run: Run; me: Me; onChange: (run: R
         </>
       )}
       {error && <p className="error" role="alert">{error}</p>}
+
     </section>
   );
 }
@@ -208,18 +279,23 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
     return () => { current = false; };
   }, [id]);
 
-  // Runs execute in the background: re-read this one until it has finished.
-  const unfinished = run !== null && run.id === id && run.status !== "finished";
+  // Runs execute in the background: re-read this one until it has finished. A finished dry
+  // run is re-read too, more slowly, while its Approval can still change (an Approver's
+  // decision, or expiry), so a page left open shows it without a reload (#77).
+  const shown = run !== null && run.id === id;
+  const unfinished = shown && run.status !== "finished";
+  const approvalOpen = shown && run.kind === "dry-run"
+    && (run.approval?.status === "awaiting-approval" || run.approval?.status === "approved");
   useEffect(() => {
-    if (!unfinished) return;
+    if (!unfinished && !approvalOpen) return;
     let current = true;
     const timer = window.setTimeout(() => {
       getRun(id)
         .then((r) => { if (current) setRun(r); })
         .catch((e: Error) => { if (current) setError(e.message); });
-    }, POLL_MS);
+    }, unfinished ? POLL_MS : APPROVAL_POLL_MS);
     return () => { current = false; window.clearTimeout(timer); };
-  }, [id, unfinished, run]);
+  }, [id, unfinished, approvalOpen, run]);
 
   if (error) return <p className="error" role="alert">{error}</p>;
   if (!run) return <p>Loading…</p>;
@@ -231,6 +307,9 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
       </p>
       {run.kind === "dry-run" && (
         <p className="notice"><strong>Dry run</strong>: nothing is changed.</p>
+      )}
+      {run.kind === "apply" && run.approval?.decided_by && (
+        <p className="notice">Approved by {run.approval.decided_by}: “{run.approval.comment}”</p>
       )}
       {run.kind === "apply" && run.applied_from && (
         <p className="notice"><strong>Apply</strong> of the reviewed{" "}
@@ -247,6 +326,7 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
       {run.review && <ReviewPanel review={run.review} />}
       {/* Keyed by run: each dry run needs its own acknowledgement, even when Apply moves
           to a fresh dry run and React would otherwise reuse this component's state. */}
+      <ApprovalPanel key={`approval-${run.id}`} run={run} me={me} onChange={setRun} />
       <ApplySteps key={run.id} run={run} me={me} onChange={setRun} />
       <RunControls key={`controls-${run.id}`} run={run} me={me} onChange={setRun} />
       <dl>

@@ -45,15 +45,26 @@ def record_override(verdict, reason: str | None, by: str, secrets) -> CapOverrid
     contain a secret value: it is stored with the Run and shown to every role."""
     if not verdict.raised_caps:
         return None
-    reason = (reason or "").strip()
-    if not reason:
+    if not (reason or "").strip():
         caps = ", ".join(f"{f} to {v} (default {d})" for f, d, v in raised(verdict))
         raise HTTPException(422, f"Raising {caps} needs an override reason: say why this Run "
                                  "may change more than usual.")
-    if any(s and len(s) >= 4 and s in reason for s in secrets):
-        raise HTTPException(422, "The override reason contains a secret value; it is stored "
-                                 "with the Run and shown to every role.")
-    return CapOverride(reason, by, raised(verdict))
+    return CapOverride(recorded_text("override reason", reason, secrets), by,
+                       raised(verdict))
+
+
+def recorded_text(name: str, text: str | None, secrets) -> str:
+    """Free text stored with a Run and shown to every role (an override reason, an Approval
+    comment): non-blank, and, like an argument, never containing a secret value."""
+    text = (text or "").strip()
+    if not text:
+        raise HTTPException(422, f"A {name} is required.")
+    if len(text) > MAX_REASON_LENGTH:
+        raise HTTPException(422, f"The {name} is longer than {MAX_REASON_LENGTH} characters.")
+    if any(s and len(s) >= 4 and s in text for s in secrets):
+        raise HTTPException(422, f"The {name} contains a secret value; it is stored with the "
+                                 "Run and shown to every role.")
+    return text
 
 
 def check_reviewed(verdict, override: CapOverride | None) -> None:
