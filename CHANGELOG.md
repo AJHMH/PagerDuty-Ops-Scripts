@@ -5,6 +5,12 @@ Format: [Keep a Changelog](https://keepachangelog.com/) · Versioning: [SemVer](
 
 ## [Unreleased]
 
+### Changed
+- Package metadata declares the license as an SPDX expression (`license = "MIT"`, with
+  `license-files`), replacing the `license = { file = ... }` table that setuptools deprecated
+  (it stops building such projects after 2027-02-18). Building from source now needs
+  setuptools 77 or later; pip fetches it automatically.
+
 ## [1.2.0] - 2026-11-25
 
 There is no 1.1.0 release: a `v1.1.0` tag from April points at a commit whose version was
