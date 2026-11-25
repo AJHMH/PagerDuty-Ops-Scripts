@@ -10,7 +10,8 @@ Options and values are judged as the command's own parser reads them, so argpars
 Commands that write run only as dry runs (#72): the gate adds --dry-run where that is the
 command's switch, refuses an explicit --apply, and re-checks with the engine that the final
 argv really is a dry run. Only Operators and Approvers may dry-run a command that writes
-(403); an apply is refused for everyone until Phase 2 (ADR 0015).
+(403). A new Run never applies: an apply is only ever of a reviewed dry run (`gate_apply`, ADR
+0003), and whether the service allows it at all is its phase (`phase.py`, ADR 0016).
 """
 
 from __future__ import annotations
@@ -126,9 +127,9 @@ def gate(entry: CommandEntry, argv: list[str], cwd: Path, secrets,
         check_arguments(entry, argv, secrets)
         verdict = assess_run(module, entry, argv, cwd)
     if not verdict.dry_run:
-        raise HTTPException(403, f"These arguments would apply {entry.name}'s changes. Apply "
-                                 "arrives in Phase 2; until then commands that write run only "
-                                 "as dry runs.")
+        raise HTTPException(403, f"These arguments would apply {entry.name}'s changes. A Run "
+                                 "of a command that writes starts as a dry run; apply it from "
+                                 "its Run page once you've reviewed it.")
     return argv, verdict
 
 

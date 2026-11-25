@@ -14,11 +14,12 @@ production it is the tested runbook.
 
 Install on DEV first, then TEST, then production.
 
-**Phase 1 is read only (ADR 0015), and the credentials enforce it, not the code.** The code
-on `main` already includes Apply (Phase 2) and Approvals (Phase 3), and has no switch to
-turn them off. Until the City security review has passed, give the service a **read-only**
-PagerDuty key and no ServiceNow write access. Then dry runs and reports work, and any apply
-fails at PagerDuty or ServiceNow with an auth error (exit 3) before anything is written.
+**Phase 1 is read only (ADR 0015).** The code includes Apply (Phase 2) and Approvals
+(Phase 3); `PD_UI_MAX_PHASE` sets the phase this server is approved for (ADR 0016). It
+defaults to `1`, read only: dry runs and reports work, and every apply is refused. Raise it
+only after the City security review approves that phase. Match the credentials to the phase
+too, as defence in depth: until Phase 2 is approved, give the service a **read-only**
+PagerDuty key and no ServiceNow write access, so even a bug in the service can't write.
 
 ## Contents
 
@@ -364,6 +365,9 @@ Copy `WinSW-x64.exe` to `C:\pd-ops\service\pd-ui.exe`, and create
   <env name="PD_UI_RUN_ROOT" value="D:\pd-ops-data\runs"/>
   <env name="PD_UI_STATIC_DIR" value="C:\pd-ops\current\static"/>
   <env name="PD_UI_PORT" value="8080"/>
+  <!-- The rollout phase this server is approved for (ADR 0016): 1 read only (default),
+       2 applies that can be undone, 3 everything. Raise it only once that phase is approved. -->
+  <env name="PD_UI_MAX_PHASE" value="1"/>
   <env name="PD_UI_OKTA_ISSUER" value="https://ORG.okta.com/oauth2/default"/>
   <env name="PD_UI_OKTA_CLIENT_ID" value="CLIENT_ID"/>
   <env name="PD_UI_OKTA_REDIRECT_URI" value="https://HOST/auth/callback"/>
@@ -572,6 +576,7 @@ Do all of these on DEV and TEST, and attach the results to the security review.
 | 7 | Run a read-only command, e.g. List teams | Succeeds; its output and files can be downloaded |
 | 8 | As a Viewer, try to dry-run a writing command (e.g. Apply tags) | Refused (403); Operators and Approvers can dry-run it |
 | 8a | Confirm the PagerDuty key in the vault is read-only, and the ServiceNow integration user has no write ACLs (Phase 1) | Confirmed by the PagerDuty and ServiceNow admins |
+| 8b | At Phase 1, open `https://<host>/api/me`, then as an Operator review a dry run of a writing command | `max_phase` is `1`; the Run page says the service is read only and offers no Apply |
 | 9 | Run history shows the Run after `Restart-Service pd-ui` | Still listed; anything that was executing shows Stopped |
 | 10 | Stop the service while a long read-only Run executes, then `Get-Process python` | No Run processes left; the Run shows Stopped |
 | 11 | Secrets aren't on disk (below) | No matches |
@@ -599,6 +604,9 @@ store `[redacted]` in its place.
 
 Upgrades go DEV → TEST → PROD, in a change window. Users are signed out, and anything that
 is executing is stopped.
+
+If the server is approved for Phase 2 or 3, check that `pd-ui.xml` sets `PD_UI_MAX_PHASE`
+before you upgrade. Without it the service comes back read only (ADR 0016).
 
 1. Build the new bundle ([section 3](#3-build-the-release-on-a-workstation)) and install it
    into a **new** folder, `C:\pd-ops\releases\<new>`. Do everything in
@@ -685,6 +693,8 @@ vault through the start script; everything else is set in `pd-ui.xml`.
 | `PD_UI_OKTA_REDIRECT_URI` | yes | no | `https://<host>/auth/callback` |
 | `PD_UI_STATIC_DIR` | yes in practice | no | `C:\pd-ops\current\static` |
 | `PD_UI_PORT` | no | no | Port on 127.0.0.1; default 8080 |
+| `PD_UI_MAX_PHASE` | no | no | Rollout phase this server is approved for: `1` read only (default), `2` applies that can be undone, `3` everything ([ui.md](ui.md#rollout-phase-pd_ui_max_phase-adr-0016)). Any other value stops the service |
+| `PD_UI_LEDGER` | no | no | `off` switches the permanent Ledger off if Records Management declines it (ADR 0013); on by default. Any value other than on/off, true/false, 1/0, yes/no stops the service |
 
 **Passed through to Runs.** Only these, plus a short allowlist (`PATH`, `TEMP`, …), reach a
 Run's process:

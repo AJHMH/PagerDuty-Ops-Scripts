@@ -44,6 +44,7 @@ from .overrides import (
     record_override,
     recorded_text,
 )
+from .phase import require_apply, require_approvals
 from .retention import Purger
 from .review import MODE_FLAGS
 from .roles import NO_ROLE_MESSAGE, Role, role_for
@@ -191,7 +192,8 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
     @app.get("/api/me")
     def me(who: SignedIn):
         admin, role = who
-        return {"name": admin.name, "email": admin.email, "role": role.label}
+        return {"name": admin.name, "email": admin.email, "role": role.label,
+                "max_phase": settings.max_phase}
 
     descriptions = None
 
@@ -310,6 +312,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         nothing is applied (ADRs 0011, 0012)."""
         admin, role = who
         dry = own_dry_run(run_id, admin, role, "apply")
+        require_apply(settings.max_phase)  # Phase 1: no apply at all (ADR 0016)
         if dry["reviewed_by"] != admin.email:
             raise HTTPException(409, "This dry run hasn't been reviewed: review its changes "
                                      "before applying it.")
@@ -323,6 +326,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         try:
             _, apply_argv, verdict = gate_apply(entry, neutral, settings.run_root / run_id,
                                                 settings.secret_env.values())
+            require_apply(settings.max_phase, verdict)  # Phase 2: not if it's irreversible
             # The apply raises the reviewed caps (identical inputs); check their reason is on
             # record rather than trusting the dry run, which an older version may have made.
             dry_record = store.record(run_id)
@@ -355,6 +359,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         operation. Whether it is irreversible is the engine's call (fails closed)."""
         admin, role = who
         dry = own_dry_run(run_id, admin, role, "ask for an Approval of")
+        require_approvals(settings.max_phase)
         if dry["reviewed_by"] != admin.email:
             raise HTTPException(409, "Review this dry run's changes before asking for an "
                                      "Approval.")
@@ -383,6 +388,7 @@ def create_app(settings: Settings, *, identity: IdentityProvider | None = None,
         admin, role = who
         if role < Role.APPROVER:
             raise HTTPException(403, "Only Approvers can approve or reject.")
+        require_approvals(settings.max_phase)
         run = store.record(run_id)
         if run is None:
             raise HTTPException(404, "No such Run.")

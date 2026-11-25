@@ -22,6 +22,7 @@ from fastapi import HTTPException
 from . import files as run_files
 from .approvals import Approval, require_approved
 from .overrides import CapOverride, check_reviewed
+from .phase import require_apply
 from .review import MODE_FLAGS, input_hash, output_hash
 from .runner import OUTCOMES, Result, kill_leftover, run_command
 from .store import RUNNING, RunFile, RunRecord, RunStore, utc_now
@@ -240,6 +241,11 @@ class Executor:
         dry_argv, _, verdict = gate_apply(entry, neutral, dry_dir,
                                           self.settings.secret_env.values())
         check_reviewed(verdict, CapOverride.of(apply))  # cap defaults can change meanwhile
+        try:  # queued before the service was set to a lower phase and restarted (ADR 0016)
+            require_apply(self.settings.max_phase, verdict)
+        except HTTPException as e:
+            self._not_applied(apply_id, "failed", f"{e.detail} Nothing was applied.")
+            return
         if not self._still_approved(verdict, apply_id):  # it can expire in the queue
             return
 
