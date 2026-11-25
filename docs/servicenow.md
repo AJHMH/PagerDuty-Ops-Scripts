@@ -95,7 +95,7 @@ production.
 | `SN_PROD_INSTANCES` | comma list of production instances, e.g. `dallastx`. **Required for any write** (fails closed). |
 | `SN_REHEARSAL_INSTANCES` | comma list whose successful runs produce receipts, e.g. `dallastx-test` |
 | `SN_RECEIPT_MAX_AGE_DAYS` | receipt lifetime (default 7) |
-| `PD_OPS_RECEIPTS_DIR` | receipts directory (default `.pd_ops_receipts`, git-ignored) |
+| `PD_OPS_RECEIPTS_DIR` | receipts directory (default `.pd_ops_receipts`, git-ignored). The UI service sets one shared directory for every Run ([ui.md](ui.md#rehearsal-receipts)) |
 | `SN_AUTH_METHOD` | `okta` (default), `sn-oauth`, or `basic` |
 | `OKTA_DOMAIN`, `OKTA_AUTH_SERVER_ID`, `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET`, `OKTA_SCOPE` | Okta client-credentials (see [servicenow-okta-setup.md](servicenow-okta-setup.md)) |
 | `SN_CLIENT_ID`, `SN_CLIENT_SECRET` | ServiceNow OAuth client credentials (`sn-oauth`) |

@@ -278,9 +278,7 @@ def test_a_pruning_templates_apply_needs_an_approval(client):
     assert ask(client, dry["id"]).json()["approval"]["reasons"] == ["--prune given"]
 
 
-def test_a_servicenow_plan_that_clears_an_id_needs_an_approval(client, monkeypatch):
-    monkeypatch.setenv("SN_PROD_INSTANCES", "dallastx")
-    monkeypatch.setenv("SN_REHEARSAL_INSTANCES", "dallastx-test")
+def test_a_servicenow_plan_that_clears_an_id_needs_an_approval(client, sn_instances):
     upload = plan_upload([{"op": "sn_set_field", "field": "f", "value": ""}])
     dry = reviewed(client, "ui-sn-sync", values={"instance": "dallastx-test"}, files=upload,
                    subcommand="apply")
@@ -288,13 +286,13 @@ def test_a_servicenow_plan_that_clears_an_id_needs_an_approval(client, monkeypat
         "plan has 1 sn_set_field item(s) clearing a value"]
 
 
-def test_a_servicenow_production_apply_needs_an_approval(client, monkeypatch):
-    monkeypatch.setenv("SN_PROD_INSTANCES", "dallastx")
-    monkeypatch.setenv("SN_REHEARSAL_INSTANCES", "dallastx-test")
+def test_a_servicenow_production_apply_needs_an_approval(client, sn_instances):
     setting = plan_upload([{"op": "sn_set_field", "field": "f", "value": "PABC"}])
     rehearsal = reviewed(client, "ui-sn-sync", values={"instance": "dallastx-test"},
                          files=setting, subcommand="apply")
     assert ask(client, rehearsal["id"]).status_code == 409  # a rehearsal needs none
+    # The engine checks for a receipt even on a production dry run: rehearse it first (#79).
+    assert wait(client, apply(client, rehearsal["id"]).json()["id"])["outcome"] == "succeeded"
     production = reviewed(client, "ui-sn-sync", values={"instance": "dallastx"},
                           files=setting, subcommand="apply")
     assert ask(client, production["id"]).json()["approval"]["reasons"] == [

@@ -3,6 +3,11 @@
 Secrets (the PagerDuty account key, the ServiceNow/Okta client secrets) are fetched from the
 City's vault into the service's environment (ADR 0008) and reach Runs only as environment
 variables, never on a command line or in a file.
+
+Rehearsal receipts live in one shared directory on the service (ADR 0007), so a plan rehearsed
+in one Run unlocks the production apply in another. Each Run has its own working directory, so
+the engine's default (``.pd_ops_receipts`` under the current directory) would give every Run
+its own receipts; the service sets ``PD_OPS_RECEIPTS_DIR`` to an absolute path for every Run.
 """
 
 from __future__ import annotations
@@ -24,7 +29,14 @@ SECRET_ENV_NAMES = (
 ENGINE_ENV_NAMES = (
     "PD_FROM_EMAIL", "SN_INSTANCE", "SN_PROD_INSTANCES", "SN_REHEARSAL_INSTANCES",
     "SN_AUTH_METHOD", "SN_FIELD_MAP", "OKTA_DOMAIN", "OKTA_AUTH_SERVER_ID", "OKTA_SCOPE",
+    "SN_RECEIPT_MAX_AGE_DAYS",
 )
+# Engine configuration the service sets for every Run itself (pagerduty_ops/receipts.py).
+RECEIPTS_ENV = "PD_OPS_RECEIPTS_DIR"
+SERVICE_ENV_NAMES = (RECEIPTS_ENV,)
+# Where receipts go when the service's environment doesn't name a directory: a folder next to
+# the Run root, never inside it, since the purge sweeps folders there that no Run owns (ADR 0013).
+DEFAULT_RECEIPTS_SUBDIR = "receipts"
 
 
 @dataclass
@@ -42,6 +54,7 @@ class Settings:
     session_secret: str
     secret_env: dict[str, str] = field(default_factory=dict)
     extra_env: dict[str, str] = field(default_factory=dict)
+    receipts_dir: Path | None = None  # default: "receipts" next to the Run root
     okta: OktaSettings | None = None
     static_dir: Path | None = None
     run_timeout_seconds: int = 2 * 3600  # ADR 0012; a command's declaration may extend it
@@ -52,6 +65,17 @@ class Settings:
     # unless Records Management declines it (PD_UI_LEDGER=off), when it is purged too.
     retention_days: int = 90
     ledger_enabled: bool = True
+
+    def __post_init__(self):
+        self.run_root = Path(self.run_root)
+        runs = Path(os.path.abspath(self.run_root))
+        # Absolute, so it names the same directory whichever Run directory is the cwd.
+        self.receipts_dir = Path(os.path.abspath(
+            self.receipts_dir or runs.parent / DEFAULT_RECEIPTS_SUBDIR))
+        if self.receipts_dir == runs or runs in self.receipts_dir.parents:
+            raise SystemExit(f"{RECEIPTS_ENV} ({self.receipts_dir}) must not be inside "
+                             f"PD_UI_RUN_ROOT ({runs}): the purge would delete the receipts.")
+        self.extra_env[RECEIPTS_ENV] = str(self.receipts_dir)
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -67,6 +91,8 @@ class Settings:
             session_secret=need("PD_UI_SESSION_SECRET"),
             secret_env={n: os.environ[n] for n in SECRET_ENV_NAMES if os.environ.get(n)},
             extra_env={n: os.environ[n] for n in ENGINE_ENV_NAMES if os.environ.get(n)},
+            receipts_dir=Path(os.environ[RECEIPTS_ENV].strip())
+            if os.environ.get(RECEIPTS_ENV, "").strip() else None,
             okta=OktaSettings(
                 issuer=need("PD_UI_OKTA_ISSUER"),
                 client_id=need("PD_UI_OKTA_CLIENT_ID"),
