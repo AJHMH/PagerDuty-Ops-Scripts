@@ -372,6 +372,8 @@ Copy `WinSW-x64.exe` to `C:\pd-ops\service\pd-ui.exe`, and create
   <env name="SN_PROD_INSTANCES" value="dallastx"/>
   <env name="SN_REHEARSAL_INSTANCES" value="dallastx-dev,dallastx-test"/>
   <env name="SN_AUTH_METHOD" value="okta"/>
+  <env name="OKTA_DOMAIN" value="ORG.okta.com"/>
+  <env name="OKTA_AUTH_SERVER_ID" value="AUTH_SERVER_ID"/>
   <env name="OKTA_CLIENT_ID" value="SN_SYNC_CLIENT_ID"/>
   <env name="OKTA_SCOPE" value="servicenow.table"/>
 
@@ -678,14 +680,7 @@ Run's process:
 |---|---|---|
 | `PD_API_TOKEN` | **yes** | PagerDuty account API key |
 | `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET` | secret: **yes** | `pd-sn-sync`'s Okta client-credentials app |
-| `SN_CLIENT_ID`, `SN_CLIENT_SECRET`, `SN_USERNAME`, `SN_PASSWORD` | **yes** | Only for `SN_AUTH_METHOD=sn-oauth` / `basic` |
+| `SN_CLIENT_ID`, `SN_CLIENT_SECRET`, `SN_USER`, `SN_PASSWORD` | **yes** | Only for `SN_AUTH_METHOD=sn-oauth` / `basic` |
 | `PD_FROM_EMAIL` | no | `From` header for commands that need one |
 | `SN_INSTANCE`, `SN_PROD_INSTANCES`, `SN_REHEARSAL_INSTANCES`, `SN_FIELD_MAP`, `SN_AUTH_METHOD` | no | ServiceNow settings ([servicenow.md](servicenow.md)) |
-| `OKTA_TOKEN_URL`, `OKTA_SCOPE` | no | Okta token settings |
-
-> **Known gap: ServiceNow Runs from the UI.** `pd-sn-sync` builds its Okta token URL from
-> `OKTA_DOMAIN` and `OKTA_AUTH_SERVER_ID`, and its basic auth reads `SN_USER`. The service
-> doesn't yet pass those through: it passes `OKTA_TOKEN_URL` and `SN_USERNAME` instead. So
-> `pd-sn-sync` Runs from the UI will fail with a configuration error (exit 2) until that is
-> fixed in `pagerduty_ops_ui/settings.py`. This doesn't affect PagerDuty-only commands, or
-> Phase 1 sign-in and reports.
+| `OKTA_DOMAIN`, `OKTA_AUTH_SERVER_ID`, `OKTA_SCOPE` | no | `pd-sn-sync`'s Okta authorization server and scope ([servicenow-okta-setup.md](servicenow-okta-setup.md)) |
