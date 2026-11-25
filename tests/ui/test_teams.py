@@ -269,3 +269,28 @@ def test_the_webhook_url_is_never_passed_to_a_run():
     from pagerduty_ops_ui.settings import ENGINE_ENV_NAMES, SECRET_ENV_NAMES
     assert notify.ENV_NAME not in (*ENGINE_ENV_NAMES, *SECRET_ENV_NAMES)
     assert "teams_webhook_url" in {f.name for f in dataclasses.fields(Settings)}
+
+
+def test_a_request_renewed_during_the_sweep_is_still_announced_as_the_one_that_expired(
+        teams, webhook, clock, monkeypatch):
+    # The sweep must describe the request it claimed, not whatever the Run holds a moment
+    # later: here the requester asks again right after the claim.
+    from pagerduty_ops_ui.store import RunStore
+
+    accept(webhook)
+    dry = irreversible(teams)
+    expired = ask(teams, dry["id"])["approval"]["expires_at"]
+    clock.advance(hours=25)
+
+    claim = RunStore.claim_expiry_announcement
+
+    def claim_then_renew(store, run_id):
+        claimed = claim(store, run_id)
+        ask(teams, run_id)  # the requester asks again at that very moment
+        return claimed
+
+    monkeypatch.setattr(RunStore, "claim_expiry_announcement", claim_then_renew)
+    assert teams.notifier.sweep_expiries() == 1
+    by_title = {c["body"][0]["text"]: c for c in cards(webhook, 3)}
+    expiry = by_title["Approval request expired: ui-writer"]
+    assert facts(expiry)["Expired"] == notify._when(expired)

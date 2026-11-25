@@ -146,11 +146,11 @@ class TeamsNotifier:
             return 0
         queued = 0
         for run_id in self.store.expired_approvals_to_announce():
-            if self.store.claim_expiry_announcement(run_id):
-                run = self.store.get(run_id)
-                if run is not None:
-                    self.approval_event("expired", run)
-                    queued += 1
+            # The claim's own snapshot: the request as it expired, not as it is a moment later.
+            claimed = self.store.claim_expiry_announcement(run_id)
+            if claimed is not None:
+                self.approval_event("expired", claimed)
+                queued += 1
         return queued
 
     # ---------- delivery ----------
