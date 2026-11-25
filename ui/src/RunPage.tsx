@@ -302,8 +302,11 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
   const unfinished = shown && run.status !== "finished";
   const approvalOpen = shown && run.kind === "dry-run"
     && (run.approval?.status === "awaiting-approval" || run.approval?.status === "approved");
+  // A finished Scheduled run's Drift is decided on the scheduler's next tick (#80).
+  const driftPending = shown && run.schedule_id !== null && run.status === "finished"
+    && run.drift === null;
   useEffect(() => {
-    if (!unfinished && !approvalOpen) return;
+    if (!unfinished && !approvalOpen && !driftPending) return;
     let current = true;
     const timer = window.setTimeout(() => {
       getRun(id)
@@ -311,7 +314,7 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
         .catch((e: Error) => { if (current) setError(e.message); });
     }, unfinished ? POLL_MS : APPROVAL_POLL_MS);
     return () => { current = false; window.clearTimeout(timer); };
-  }, [id, unfinished, approvalOpen, run]);
+  }, [id, unfinished, approvalOpen, driftPending, run]);
 
   if (error) return <p className="error" role="alert">{error}</p>;
   if (!run) return <p>Loading…</p>;

@@ -54,6 +54,11 @@ def schedulable_argv(entry, subcommand: str | None, values: dict, cwd: Path, sec
     except BadValues as e:
         raise HTTPException(422, str(e)) from None
     module = check_arguments(entry, argv, secrets)
+    if getattr(module, "DRIFT_SUMMARY", None) and "--quiet" in argv:
+        # --quiet logs errors only, so it would hide the summary line Drift is read from.
+        raise HTTPException(422, f"--quiet would hide {entry.name}'s summary line "
+                                 f"({module.DRIFT_SUMMARY.strip()} …), which is how a "
+                                 "Scheduled run's Drift is found. Leave it off.")
     verdict = assess_run(module, entry, argv, cwd)
     if verdict.writes:
         what = "a dry run of a command that writes" if verdict.dry_run else "a command that writes"

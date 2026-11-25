@@ -136,6 +136,15 @@ def test_a_writing_subcommand_is_refused_and_a_read_only_one_allowed(svc):
     assert schedule(svc, command="ui-subcommands", subcommand=read_only[0]).status_code == 201
 
 
+def test_quiet_logging_is_refused_where_it_would_hide_drift(svc):
+    # pd-validate's Drift is read from its "Findings: ..." INFO line, which --quiet drops.
+    response = schedule(svc, values={"quiet": True})
+    assert response.status_code == 422
+    assert "--quiet would hide" in response.json()["detail"]
+    # Commands that declare no Drift may be quiet.
+    assert schedule(svc, command="pd-list-teams", values={"quiet": True}).status_code == 201
+
+
 def test_schedules_take_arguments_not_files(svc):
     response = schedule(svc, values={"config": "checks.json"})
     assert response.status_code == 422
