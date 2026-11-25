@@ -4,6 +4,7 @@ Refused with 422 (no Run is created):
 - arguments the command's own parser rejects, and --help (not a Run);
 - secrets or prompts on the command line (-t/--token, --prompt) and any argument
   containing a configured secret value (it would be stored with the Run);
+- options the service manages itself (--log-file, --receipts-dir);
 - paths outside the Run's own directory (absolute, drive-qualified, UNC or with "..").
 Options and values are judged as the command's own parser reads them, so argparse's prefixes
 (--tok), attached values (-tX, -oPATH) and short-option clusters (-qoPATH) can't slip past.
@@ -35,9 +36,15 @@ from .roles import Role
 # Options whose use is refused, whatever spelling argparse accepted for them (prefixes such as
 # --tok, attached values such as -tVALUE, clusters such as -qtVALUE).
 FORBIDDEN_OPTIONS = frozenset({"-t", "--token", "--prompt"})
-# Options the service manages itself: every Run's log is already captured, and a timestamped
-# log file in the Run directory would be an output whose hash never matches a fresh dry run.
-SERVICE_MANAGED_OPTIONS = frozenset({"--log-file"})
+# Options the service manages itself, and why each is refused:
+# - every Run's log is already captured, and a timestamped log file in the Run directory would
+#   be an output whose hash never matches a fresh dry run;
+# - rehearsal receipts live in the service's one shared directory (ADR 0007). A receipts
+#   directory inside the Run's own directory would let an uploaded file pose as a receipt.
+SERVICE_MANAGED_OPTIONS = {
+    "--log-file": "the service keeps every Run's log itself",
+    "--receipts-dir": "rehearsal receipts live in the service's shared receipts directory",
+}
 DRIVE = re.compile(r"^[A-Za-z]:")
 
 
@@ -98,9 +105,10 @@ def check_arguments(entry: CommandEntry, argv: list[str], secrets):
         if used and FORBIDDEN_OPTIONS & set(action.option_strings):
             _refuse(f"{'/'.join(action.option_strings)} is not allowed: Runs use the "
                     "service's credentials.")
-        if used and SERVICE_MANAGED_OPTIONS & set(action.option_strings):
-            _refuse(f"{'/'.join(action.option_strings)} is not allowed: the service keeps "
-                    "every Run's log itself.")
+        managed = SERVICE_MANAGED_OPTIONS.keys() & set(action.option_strings)
+        if used and managed:
+            _refuse(f"{'/'.join(action.option_strings)} is not allowed: "
+                    f"{SERVICE_MANAGED_OPTIONS[min(managed)]}.")
         for value in _strings(getattr(namespace, action.dest, None)):
             if _escapes_run_dir(value):
                 _refuse(f"{value!r} points outside the Run's own directory.")

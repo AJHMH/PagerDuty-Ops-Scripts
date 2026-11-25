@@ -45,7 +45,7 @@ A command with subcommands gets one section per subcommand, marked with whether 
 Some arguments are never offered:
 - credentials and prompts: `-t`/`--token`, `--prompt`;
 - `-y`, `--dry-run` and `--apply`, which the UI's own gates will set (ADRs 0003, 0011);
-- `--log-file` and `--receipts-dir`, which the service manages itself.
+- `--log-file` and `--receipts-dir`, which the service manages itself. The gate refuses both, however they're spelled (see [Rehearsal receipts](#rehearsal-receipts)).
 
 argparse can't say which arguments are files, so `FILE_ROLES` in `forms.py` names them. Tests fail in two cases:
 - a command has an argument shape the generator can't render;
@@ -208,7 +208,14 @@ A Run receives them only as environment variables. Apart from them, it gets a sh
 | `PD_UI_MAX_PHASE` | Rollout phase this server is approved for: `1` read only (default), `2` applies that can be undone, `3` everything ([above](#rollout-phase-pd_ui_max_phase-adr-0016)) |
 | `PD_UI_LEDGER` | `off` (or `false`, `0`, `no`) switches the permanent Ledger off, if Records Management declines it (ADR 0013); `on` (or `true`, `1`, `yes`, or unset) keeps it on. Anything else stops the service with a configuration error |
 | `PD_API_TOKEN`, `SN_CLIENT_ID`, `SN_CLIENT_SECRET`, `SN_USER`, `SN_PASSWORD`, `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET` | Engine secrets, passed through to Runs and redacted from stored output |
-| `PD_FROM_EMAIL`, `SN_INSTANCE`, `SN_PROD_INSTANCES`, `SN_REHEARSAL_INSTANCES`, `SN_AUTH_METHOD`, `SN_FIELD_MAP`, `OKTA_DOMAIN`, `OKTA_AUTH_SERVER_ID`, `OKTA_SCOPE` | Non-secret engine settings, passed through to Runs ([servicenow.md](servicenow.md)). No other engine variable reaches a Run |
+| `PD_FROM_EMAIL`, `SN_INSTANCE`, `SN_PROD_INSTANCES`, `SN_REHEARSAL_INSTANCES`, `SN_AUTH_METHOD`, `SN_FIELD_MAP`, `SN_RECEIPT_MAX_AGE_DAYS`, `OKTA_DOMAIN`, `OKTA_AUTH_SERVER_ID`, `OKTA_SCOPE` | Non-secret engine settings, passed through to Runs ([servicenow.md](servicenow.md)). No other engine variable reaches a Run |
+| `PD_OPS_RECEIPTS_DIR` | The shared rehearsal receipts directory (default: `receipts` next to `PD_UI_RUN_ROOT`). The service makes it absolute and sets it for every Run itself. Inside `PD_UI_RUN_ROOT` stops the service |
+
+### Rehearsal receipts
+
+A production `pd-sn-sync apply` needs the receipt its rehearsal wrote ([servicenow.md](servicenow.md)). Each Run runs in its own directory under `PD_UI_RUN_ROOT`, so the engine's default receipts directory (`.pd_ops_receipts`, relative to the current directory) would give every Run its own receipts, and no production Run would find its rehearsal's. So receipts live in one shared directory on the service (ADR 0007): the service sets `PD_OPS_RECEIPTS_DIR` for every Run to an absolute path, a `receipts` folder next to `PD_UI_RUN_ROOT` unless the service's environment names another. It is never inside `PD_UI_RUN_ROOT`: the purge deletes folders there that no Run owns (ADR 0013), so the service refuses to start with it there. A plan rehearsed in one Run, by one admin, unlocks the production apply of the same plan in another Run, by another.
+
+The gate refuses `--receipts-dir` (422). A receipts directory inside the Run's own directory would let an uploaded file pose as a rehearsal receipt. The receipts directory is not a Run directory, so it isn't downloadable from any Run.
 
 ## Running it
 
