@@ -213,7 +213,7 @@ PD_UI_STATIC_DIR=ui/dist pd-ui
 
 A change to the models in `store.py` needs a new migration in `pagerduty_ops_ui/migrations/versions/`; `test_migrations.py` fails until the migrations build exactly the schema the models describe.
 
-`pd-ui` listens on 127.0.0.1 only. IIS terminates TLS in front of it, and the service runs as a least-privilege Windows Service. The Windows host packaging is #71.
+`pd-ui` listens on 127.0.0.1 only. IIS terminates TLS in front of it, and the service runs as a least-privilege Windows Service. To install it on a City Windows Server, follow [install-windows.md](install-windows.md) (#71).
 
 For front-end work, `npm --prefix ui run dev` serves the UI with hot reload and proxies `/api` and `/auth` to a running `pd-ui`.
 
