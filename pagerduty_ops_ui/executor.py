@@ -240,10 +240,7 @@ class Executor:
         dry_argv, _, verdict = gate_apply(entry, neutral, dry_dir,
                                           self.settings.secret_env.values())
         check_reviewed(verdict, CapOverride.of(apply))  # cap defaults can change meanwhile
-        try:  # an Approval can expire while the apply waits its turn
-            require_approved(verdict, Approval.of(apply), self.clock())
-        except HTTPException as e:
-            self._not_applied(apply_id, "failed", f"{e.detail} Nothing was applied.")
+        if not self._still_approved(verdict, apply_id):  # it can expire in the queue
             return
 
         fresh_id = str(uuid.uuid4())
@@ -288,8 +285,21 @@ class Executor:
                                                    "it was reviewed, so nothing was applied. "
                                                    "Review the fresh dry run.")
             self.store.withdraw_approval(dry.id)  # a new diff needs a new Approval
+        elif not self._still_approved(verdict, apply_id):
+            return  # the Approval expired during the fresh dry run: nothing was applied
         else:
             self._execute(apply_id, cancel)
+
+    def _still_approved(self, verdict, apply_id: str) -> bool:
+        """An Irreversible apply's Approval is still valid now (#77); if not, record that
+        nothing was applied. Checked when the writing slot opens and again just before the
+        writes start, since the fresh dry run in between can take a while."""
+        try:
+            require_approved(verdict, Approval.of(self.store.record(apply_id)), self.clock())
+        except HTTPException as e:
+            self._not_applied(apply_id, "failed", f"{e.detail} Nothing was applied.")
+            return False
+        return True
 
     def _not_applied(self, apply_id: str, outcome: str, note: str) -> None:
         self.store.finish(apply_id, outcome=outcome, note=note)

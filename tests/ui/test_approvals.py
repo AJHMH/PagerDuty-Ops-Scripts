@@ -6,7 +6,7 @@ irreversibility is judged by the engine's own assess(). The clock is controllabl
 import json
 
 import pytest
-from conftest import OPERATOR, VIEWER, admin_header, finished, wait
+from conftest import OPERATOR, VIEWER, admin_header, finished, wait, wait_until
 
 OTHER_APPROVER = admin_header("PD-Ops-Approver", email="cat@dallas.gov", name="Cat")
 APPROVING_REQUESTER = admin_header("PD-Ops-Approver", email="ann@dallas.gov", name="Ann")
@@ -364,3 +364,20 @@ def test_an_approval_expiring_in_the_queue_says_so_plainly(client, settings, clo
     blocked = wait(client, b["id"])
     assert "couldn't run" not in blocked["message"] and "403" not in blocked["message"]
     assert "Nothing was applied" in blocked["message"]
+
+
+def test_an_approval_expiring_during_the_fresh_dry_run_is_not_used(client, settings, clock):
+    # Codex review on #97: the fresh dry run can take a while; the Approval must still be
+    # valid when the writes would start, not only when the writing slot opened.
+    dry = irreversible(client)
+    ask(client, dry["id"])
+    decide(client, dry["id"], "approve")
+    settings.extra_env["UI_FIXTURE_DRY_SLEEP"] = "3"
+    applying = apply(client, dry["id"]).json()
+    wait_until(lambda: run(client, applying["id"])["fresh_dry_run_id"] is not None)
+    clock.advance(hours=25)                       # expires while the fresh dry run runs
+    blocked = wait(client, applying["id"])
+    assert (blocked["outcome"], blocked["stdout"]) == ("failed", "")  # never applied
+    assert "expired" in blocked["message"] and "Nothing was applied" in blocked["message"]
+    fresh = run(client, blocked["fresh_dry_run_id"])
+    assert fresh["outcome"] == "succeeded"        # the check itself did finish

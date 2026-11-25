@@ -3,6 +3,7 @@ import { applyRun, askForApproval, cancelRun, decideApproval, fileUrl, freshDryR
   getRun, reviewRun, type Me, type Outcome, type Review, type Run } from "./api";
 
 const POLL_MS = 1000;
+const APPROVAL_POLL_MS = 10000;
 
 const SIGN = { add: "+", change: "~", delete: "−" } as const;
 
@@ -278,18 +279,23 @@ export function RunPage({ id, me }: { id: string; me: Me }) {
     return () => { current = false; };
   }, [id]);
 
-  // Runs execute in the background: re-read this one until it has finished.
-  const unfinished = run !== null && run.id === id && run.status !== "finished";
+  // Runs execute in the background: re-read this one until it has finished. A finished dry
+  // run is re-read too, more slowly, while its Approval can still change (an Approver's
+  // decision, or expiry), so a page left open shows it without a reload (#77).
+  const shown = run !== null && run.id === id;
+  const unfinished = shown && run.status !== "finished";
+  const approvalOpen = shown && run.kind === "dry-run"
+    && (run.approval?.status === "awaiting-approval" || run.approval?.status === "approved");
   useEffect(() => {
-    if (!unfinished) return;
+    if (!unfinished && !approvalOpen) return;
     let current = true;
     const timer = window.setTimeout(() => {
       getRun(id)
         .then((r) => { if (current) setRun(r); })
         .catch((e: Error) => { if (current) setError(e.message); });
-    }, POLL_MS);
+    }, unfinished ? POLL_MS : APPROVAL_POLL_MS);
     return () => { current = false; window.clearTimeout(timer); };
-  }, [id, unfinished, run]);
+  }, [id, unfinished, approvalOpen, run]);
 
   if (error) return <p className="error" role="alert">{error}</p>;
   if (!run) return <p>Loading…</p>;
