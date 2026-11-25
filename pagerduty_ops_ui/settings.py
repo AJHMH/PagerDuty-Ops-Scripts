@@ -14,13 +14,14 @@ from pathlib import Path
 # Environment variables that are secrets: passed to Runs, redacted from everything stored.
 SECRET_ENV_NAMES = (
     "PD_API_TOKEN",
-    "SN_CLIENT_ID", "SN_CLIENT_SECRET", "SN_USERNAME", "SN_PASSWORD",
+    "SN_CLIENT_ID", "SN_CLIENT_SECRET", "SN_USER", "SN_PASSWORD",
     "OKTA_CLIENT_ID", "OKTA_CLIENT_SECRET",
 )
-# Non-secret engine configuration passed through to Runs.
+# Non-secret engine configuration passed through to Runs. Names must match what the engine
+# reads (pagerduty_ops/servicenow.py); tests/ui/test_settings.py checks.
 ENGINE_ENV_NAMES = (
     "PD_FROM_EMAIL", "SN_INSTANCE", "SN_PROD_INSTANCES", "SN_REHEARSAL_INSTANCES",
-    "SN_AUTH_METHOD", "SN_FIELD_MAP", "OKTA_TOKEN_URL", "OKTA_SCOPE",
+    "SN_AUTH_METHOD", "SN_FIELD_MAP", "OKTA_DOMAIN", "OKTA_AUTH_SERVER_ID", "OKTA_SCOPE",
 )
 
 

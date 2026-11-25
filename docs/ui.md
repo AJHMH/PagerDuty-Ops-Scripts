@@ -192,7 +192,8 @@ A Run receives them only as environment variables. Apart from them, it gets a sh
 | `PD_UI_STATIC_DIR` | The built front end (`ui/dist`) |
 | `PD_UI_PORT` | Port on 127.0.0.1 (default 8080). IIS proxies to it |
 | `PD_UI_LEDGER` | `off` (or `false`, `0`, `no`) switches the permanent Ledger off, if Records Management declines it (ADR 0013); `on` (or `true`, `1`, `yes`, or unset) keeps it on. Anything else stops the service with a configuration error |
-| `PD_API_TOKEN`, `SN_*`, `OKTA_*` | Engine credentials and settings, passed through to Runs |
+| `PD_API_TOKEN`, `SN_CLIENT_ID`, `SN_CLIENT_SECRET`, `SN_USER`, `SN_PASSWORD`, `OKTA_CLIENT_ID`, `OKTA_CLIENT_SECRET` | Engine secrets, passed through to Runs and redacted from stored output |
+| `PD_FROM_EMAIL`, `SN_INSTANCE`, `SN_PROD_INSTANCES`, `SN_REHEARSAL_INSTANCES`, `SN_AUTH_METHOD`, `SN_FIELD_MAP`, `OKTA_DOMAIN`, `OKTA_AUTH_SERVER_ID`, `OKTA_SCOPE` | Non-secret engine settings, passed through to Runs ([servicenow.md](servicenow.md)). No other engine variable reaches a Run |
 
 ## Running it
 
